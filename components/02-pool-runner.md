@@ -40,6 +40,13 @@ The daemon's handle on a template-forked child: `.pid`, `.sock` (daemon-side RPC
 - **READY handshake:** template sends `"READY\n"` after discovery; daemon blocks on it instead of sleeping (`runner_template.py:169`).
 - **Telemetry counters** (`get_telemetry()`, `:190-230`, `:406`): `pool_slot_acquired_total`, `pool_acquire_miss_total`, `pool_replenish_success_total`, `pool_replenish_failures_total`, `template_respawn_attempts_total`, `template_respawn_failures_total` (plus Phase 2 cascade counters `cascade_slot_reuse_hits_total`, `cascade_slot_reuse_misses_total`, `cascade_slots_idle_torndown_total`).
 
+### Staying warm — and going cold (idle lifecycle)
+A slot is "warm" because it is an already-forked process holding the template's imported modules resident in memory; "cold" means no such process exists and a session must pay the full ~30s fork + import + discovery.
+
+- **General idle slots stay warm indefinitely.** The `_replenish_loop` keeps exactly `target_size` idle slots pre-forked; a warm slot simply *waits* until a session claims it. There is **no age/TTL expiry** on a general idle slot — it does not decay to cold just from sitting unused. A general slot only disappears on **template death** (the watchdog drains the now-orphaned idle slots, `_handle_template_death`, `runner_pool.py:736-756`) or **daemon shutdown**.
+- **An empty pool means the next session goes cold.** If a session arrives and no idle slot is available, `acquire_slot()` returns `None`, `pool_acquire_miss_total++`, and that one session cold-spawns (~30s) while the replenish thread forks a fresh warm slot for the *next* arrival. So "cold" is per-session-on-a-miss, not a property of the pool decaying.
+- **Cascade-affinity slots *do* go cold if unused.** This is the one place a warm slot is deliberately *reserved* and then expired: when a slot finishes a cascade stage it can be **returned** rather than torn down (`return_slot_after_session`, `runner_pool.py:381-391`), becoming `IDLE_FOR_CASCADE` — held warm and tagged with its `cascade_id` + a `last_session_end_ts` so the *next same-cascade* session reuses the exact warm process. But a reserved slot can't sit forever: every replenish tick `_sweep_cascade_idle()` (`runner_pool.py:586-591`, `:622`) tears down any IDLE_FOR_CASCADE slot whose `last_session_end_ts` is older than `cascade_idle_timeout_seconds` (default `DEFAULT_CASCADE_IDLE_TIMEOUT_SECONDS = 300.0`, `:45`) — it **goes cold** (`cascade_slots_idle_torndown_total++`), freeing the process so the pool isn't pinned by an abandoned cascade. A later session in that cascade then either claims a general warm slot or cold-spawns.
+
 ## Lifecycle / flow
 
 1. **Daemon startup:** `TemplateManager.spawn()` → template imports runner-tier plugins, walks discovery, sends `READY\n`.
@@ -104,6 +111,7 @@ A 6-step cascade with `JAATO_RUNNER_POOL_SIZE=2`: at startup the template warms 
 - `jaato-server/server/runner_template.py:312-451` — `request_fork_slot` (FORK_SLOT + SCM_RIGHTS → FORKED:<pid>).
 - `jaato-server/server/runner_pool.py:113-230` — `PoolManager` init, target_size, telemetry counter set.
 - `jaato-server/server/runner_pool.py:546-781` — `_replenish_loop`, cascade-idle sweep, `_handle_template_death` watchdog (subreaper).
+- `jaato-server/server/runner_pool.py:45` (`DEFAULT_CASCADE_IDLE_TIMEOUT_SECONDS = 300.0`), `:381-391` (`return_slot_after_session` stamps `last_session_end_ts`), `:622` (`_sweep_cascade_idle` tears down expired IDLE_FOR_CASCADE slots) — the warm→cold idle lifecycle. General idle slots have **no** age TTL; only cascade-reserved slots expire.
 - `jaato-server/server/runner_spawn.py:52-83` — `_pool_enabled` (env var, default-on).
 - `jaato-server/server/runner_spawn.py:188-219` — three pool routing gates + slot→`SpawnedRunner` wrap.
 - `jaato/docs/design/runner_prewarm_pool_plan.md:13,72-98,302` — measured 5x speedup, fork-from-template flow, decision log.
