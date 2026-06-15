@@ -5,7 +5,7 @@
 
 ## What it is
 
-The daemon is the jaato framework's **server-first** foundation: instead of a CLI tool that starts the agent, runs one conversation, and exits, jaato runs the agent logic as a persistent background process and has clients attach to it over a socket. You start it with `python -m server` (see `jaato-server/server/__main__.py:1`); add `--daemon` and it double-forks into the background, writes a PID file, and keeps running independently of any client.
+The daemon is the jaato framework's **server-first** foundation: instead of a CLI tool that starts the agent, runs one conversation, and exits, jaato runs the agent logic as a persistent background process and has clients attach to it over a socket. You start it with the installed **`jaato-server`** console command — the entry point declared in `jaato-server/pyproject.toml` (`[project.scripts]` → `server.__main__:main`, see `jaato-server/server/__main__.py:1`); the `python -m server` module form is equivalent. Add `--daemon` and it double-forks into the background, writes a PID file, and keeps running independently of any client.
 
 This solves three problems at once. **Persistence:** sessions (conversation history, agent state, token accounting) survive client disconnects, terminal closes, and crashes, because they live in the daemon, not in the client. **Multi-client:** several clients — a terminal UI over a local socket, a web client over WebSocket — can connect to the same daemon and the same sessions concurrently. **Cheap reconnect:** a client that drops can re-attach and immediately get a full snapshot of where things stand. The daemon is also where the cost-saving runner pre-warm pool lives, so each new session can fork a warm subprocess instead of paying a cold-start penalty.
 
@@ -51,7 +51,7 @@ The `--apparmor` flag (referenced in the task) is **not specified in `__main__.p
 
 ## Lifecycle / flow
 
-1. **Launch.** `python -m server --ipc-socket /tmp/jaato.sock [--web-socket :8080] [--daemon]`. With `--daemon`, the process double-forks (`daemonize()`) and redirects stdio to the log file.
+1. **Launch.** `jaato-server --ipc-socket /tmp/jaato.sock [--web-socket :8080] [--daemon]`. With `--daemon`, the process double-forks (`daemonize()`) and redirects stdio to the log file.
 2. **Guard against duplicates.** `check_running()` reads the PID file; if a live daemon exists, the new one exits with an error.
 3. **Start & wire.** `JaatoDaemon.start()` writes the PID + config files, creates the `SessionManager`, starts the configured transports, builds the `CompositeEventSink`, and wires the `CommandRouter` into every transport.
 4. **Subreaper + pool.** `_configure_subreaper()` calls `prctl(PR_SET_CHILD_SUBREAPER, 1)` (Linux-only, `__main__.py:886`); then `TemplateManager.spawn()` starts the warm template and `PoolManager.spawn_initial_slots()` forks the idle pool slots.
@@ -65,11 +65,11 @@ Configured entirely by CLI flags + a few env vars; defaults live in the temp dir
 
 ```bash
 # Local + remote daemon, background, default auto-generated WS token
-python -m server --ipc-socket /tmp/jaato.sock --web-socket :8080 --daemon
+jaato-server --ipc-socket /tmp/jaato.sock --web-socket :8080 --daemon
 
-python -m server --status     # → "Jaato server is running (PID: 12345)"
-python -m server --stop       # graceful SIGTERM + orphan-runner reap
-python -m server --restart    # re-launch from saved /tmp/jaato.config.json
+jaato-server --status     # → "Jaato server is running (PID: 12345)"
+jaato-server --stop       # graceful SIGTERM + orphan-runner reap
+jaato-server --restart    # re-launch from saved /tmp/jaato.config.json
 ```
 
 ## Relationship to neighboring components
@@ -78,14 +78,14 @@ The daemon is the host process for the **`JaatoServer`** core (one per session) 
 
 ## Example
 
-A developer runs `python -m server --ipc-socket /tmp/jaato.sock --daemon`. The daemon double-forks, writes `/tmp/jaato.pid`, claims the subreaper role, spawns the warm runner template and two idle pool slots, and starts listening on the Unix socket. The TUI connects with `python jaato-tui/rich_client.py --connect /tmp/jaato.sock`; the `SessionManager` creates a session, forks a pool slot for its runner, and emits a `SessionInfoEvent` snapshot (current session id/name/model + the list of sessions, tools, and models). The developer chats, then closes the terminal — but the daemon and the session keep running. Hours later they reconnect from a different client, get a fresh `SessionInfoEvent`, and resume mid-conversation. `python -m server --stop` later SIGTERMs the daemon and reaps any orphaned runners left behind by sessions killed mid-cascade.
+A developer runs `jaato-server --ipc-socket /tmp/jaato.sock --daemon`. The daemon double-forks, writes `/tmp/jaato.pid`, claims the subreaper role, spawns the warm runner template and two idle pool slots, and starts listening on the Unix socket. The TUI connects with `python jaato-tui/rich_client.py --connect /tmp/jaato.sock`; the `SessionManager` creates a session, forks a pool slot for its runner, and emits a `SessionInfoEvent` snapshot (current session id/name/model + the list of sessions, tools, and models). The developer chats, then closes the terminal — but the daemon and the session keep running. Hours later they reconnect from a different client, get a fresh `SessionInfoEvent`, and resume mid-conversation. `jaato-server --stop` later SIGTERMs the daemon and reaps any orphaned runners left behind by sessions killed mid-cascade.
 
 ## Diagram brief (for illustration)
 
 - **Layout:** a layered stack, drawn top-to-bottom, with the **Daemon** as a large emphasized container band in the middle and clients above it, runner subprocesses below it.
 - **Boxes:**
   - Top row (Clients): `jaato-tui (Terminal UI)` and `Web / Remote Client`.
-  - Middle band (emphasized, labeled **"JaatoDaemon — `python -m server` (persists independently of clients)"**) containing, left-to-right: a transports sub-row `JaatoIPCServer (Unix socket, unauthenticated)` and `JaatoWSServer (WebSocket + bearer auth)`; below that `SessionManager`; and inside `SessionManager` three stacked session boxes each labeled `Session → JaatoServer → .jaato/sessions (persisted)`. Place a small side box inside the band labeled `Daemon Extensions (jaato.extensions)` and another labeled `CompositeEventSink`.
+  - Middle band (emphasized, labeled **"JaatoDaemon — `jaato-server` (persists independently of clients)"**) containing, left-to-right: a transports sub-row `JaatoIPCServer (Unix socket, unauthenticated)` and `JaatoWSServer (WebSocket + bearer auth)`; below that `SessionManager`; and inside `SessionManager` three stacked session boxes each labeled `Session → JaatoServer → .jaato/sessions (persisted)`. Place a small side box inside the band labeled `Daemon Extensions (jaato.extensions)` and another labeled `CompositeEventSink`.
   - Bottom row (subprocesses): `Runner Template (warm imports)` and two `Pool Slot` boxes forked from it.
 - **Arrows:**
   - `jaato-tui` ⇄ `JaatoIPCServer` labeled "length-prefixed JSON events".

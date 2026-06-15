@@ -58,7 +58,7 @@ The daemon's handle on a template-forked child: `.pid`, `.sock` (daemon-side RPC
 ```bash
 # Larger pool for a cascade harness; disable later for A/B vs cold-spawn.
 JAATO_RUNNER_POOL_ENABLED=true JAATO_RUNNER_POOL_SIZE=6 \
-  .venv/bin/python -m server --ipc-socket /tmp/jaato.sock --daemon
+  .venv/bin/jaato-server --ipc-socket /tmp/jaato.sock --daemon
 ```
 
 ### Pool routing gates (`spawn_session_runner`, `runner_spawn.py:200-204`)

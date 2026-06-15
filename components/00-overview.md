@@ -31,7 +31,7 @@ post-process. Finally, **cascades** chain many agent sessions (**stages**) into 
 
 | # | Layer | One-liner | Home |
 |---|-------|-----------|------|
-| 1 | **Daemon** | Long-lived `python -m server`; hosts sessions, serves IPC/WS, owns lifecycle | `server/__main__.py`, `core.py`, `session_manager.py` |
+| 1 | **Daemon** | Long-lived `jaato-server` (console script; `python -m server` equivalent); hosts sessions, serves IPC/WS, owns lifecycle | `server/__main__.py`, `core.py`, `session_manager.py` |
 | 2 | **Pool runner** | Pre-warmed runner subprocesses forked from a template to skip cold-start | `server/runner_pool.py`, `runner_template.py` |
 | 3 | **Runners** | Per-session isolated subprocess (AppArmor-confined) hosting one agent | `server/runner/`, `runner_spawn.py`, `runner_rpc_*.py` |
 | 4 | **Runtime / Session / Client** | Shared env + per-agent state + the function-call loop | `shared/jaato_runtime.py`, `jaato_session.py`, `jaato_client.py` |
