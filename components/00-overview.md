@@ -89,6 +89,8 @@ teardown); it is what reactors and cascade drivers observe, and it is why a casc
   `_HEADLESS_CLIENT_ID` (`session_manager.py:4688`), and their events are bridged to the `_cascade:{cid}`
   owner via `_dispatch_to_cascade_clients`. The two coexist by design — the CID/observer identity is
   production, and keeping the stage placeholder is intentional, not a sign of "not yet shipped".
+  (Production-confirmed by the kb-orchestrator's cascade driver, which subscribes via
+  `client.cascade_events(cid)` with `cid == cascade_driver_id` and tears down with `cascade.cancel(cid)`.)
 
 ## Diagram brief (for illustration)
 
