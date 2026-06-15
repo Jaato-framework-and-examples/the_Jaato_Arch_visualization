@@ -25,7 +25,7 @@ Directly **below** it is the Runner subprocess and its process plumbing (the pre
 ## Key concepts & structure
 
 ### `JaatoRuntime` — the shared environment
-Created and connected once (`connect(project, location)` builds a `ProviderConfig` and flips `_connected`, `jaato_runtime.py:592`). `configure_plugins(registry, permission_plugin, ledger, reliability_plugin)` stores the shared plugins and caches tool schemas/executors and system instructions (`jaato_runtime.py:714`). `create_session(model, tools=..., system_instructions=..., provider_name=..., agent_id=...)` constructs a `JaatoSession` against `self` and calls `session.configure(...)` (`jaato_runtime.py:900`). It even supports cross-provider subagents (`register_provider()`, `provider_name` override).
+Created and connected once (`connect(project, location)` builds a `ProviderConfig` and flips `_connected`, `jaato_runtime.py:592`). `configure_plugins(registry, permission_plugin, ledger, reliability_plugin)` stores the shared plugins and caches tool schemas/executors and system instructions (`jaato_runtime.py:714`). `create_session(model, tools=..., system_instructions=..., provider_name=..., agent_id=...)` constructs a `JaatoSession` against `self` and calls `session.configure(...)` (`jaato_runtime.py:900`). It even supports cross-provider subagents (`register_provider()`, `provider_name` override). **Naming wart to know:** the `tools=` argument is, despite its name, a list of **plugin** names to expose — e.g. `["cli", "web_search"]` enables those *plugins* (whose individual tools, like `cli_based_tool`, the model then calls); `None` exposes all registry plugins (`jaato_runtime.py:927`, docstring "Optional list of plugin names to expose"). Restricting to specific *tools within* a plugin is a separate mechanism: the `tool_scopes` argument, or a profile entry like `"file_edit(tools:[readFile,writeFile])"`.
 
 ### `JaatoSession` — per-agent state
 Each session keeps its own `_history`, `_cancel_token`, `_is_running` flag, `_turn_index`, `_turn_accounting`, and optional `_gc_plugin`/`_gc_config` (`jaato_session.py:430`, `:482`). It has its own `ToolExecutor` and a provider instance (lazily created on first `send_message` via `_ensure_provider()`, `jaato_session.py:3486`).
@@ -83,7 +83,10 @@ main = runtime.create_session(model="gemini-2.5-flash")
 researcher = runtime.create_session(
     model="claude-sonnet-4-20250514",
     provider_name="anthropic",            # cross-provider subagent
-    tools=["cli", "web_search"],
+    tools=["cli", "web_search"],          # NB: `tools=` takes PLUGIN names, not tool names —
+                                          # this exposes the cli + web_search *plugins*, whose
+                                          # tools (cli_based_tool, web_search, …) the model then calls.
+                                          # None = all exposed plugins; tool_scopes=… restricts within a plugin.
     system_instructions="You are a research analyst.",
 )
 ```
