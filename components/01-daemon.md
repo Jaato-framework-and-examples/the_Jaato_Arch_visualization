@@ -72,6 +72,11 @@ jaato-server --stop       # graceful SIGTERM + orphan-runner reap
 jaato-server --restart    # re-launch from saved /tmp/jaato.config.json
 ```
 
+### Auto-start (zero-config: the daemon usually starts itself)
+In practice you rarely run `jaato-server` by hand — **clients auto-start the daemon on first connect**. The SDK `IPCClient` defaults to `auto_start=True` (`jaato-sdk/jaato_sdk/client/ipc.py:229`), as does the recovery client (`recovery.py:160`), and the TUI threads it through (`backend.py:410`). On `connect()`, the client first does a short probe (≈2s when auto-start is on, `ipc.py:561`); if no live daemon is found — no PID file, or only a **stale socket** left by a crashed daemon — it removes the stale socket and launches the daemon itself with **default values**: `python -m server --ipc-socket <socket_path> --daemon` (`ipc.py:1003-1010`), then waits up to 10s for the socket to appear (`_wait_for_socket`, `ipc.py:1018`). The socket path defaults to `/tmp/jaato.sock`.
+
+Two deliberate properties: (1) the **env file is *not* passed on the auto-start command line** — the daemon is provider-agnostic, so each client ships its own configuration via a `ClientConfigRequest` *after* connecting (consistent with per-session env isolation), and (2) **races are safe** — the daemon writes its PID/config files early in `start()`, so a second client firing at the same moment finds the running daemon instead of spawning a duplicate. Auto-start can be turned off with `auto_start=False` (e.g. the recovery client disables it mid-reconnect, `recovery.py:1102`), in which case a missing daemon is a hard connection error.
+
 ## Relationship to neighboring components
 
 The daemon is the host process for the **`SessionManager`** and, per session, a **`JaatoServer`** core. It **spawns and supervises** the **runner template + pool** of subprocesses that actually execute tools under confinement — the tier **directly above** it in the stack. (It is their process-*parent* and, as **subreaper**, keeps custody of any that get orphaned; in the layering they are nonetheless the tier above, since they host the agent runtime.) **Clients** (the `jaato-tui` terminal UI over IPC, web clients over WebSocket) connect from outside, drive sessions with request events, and render the daemon's emitted events — they hold no durable agent state of their own. Sideways, **daemon extensions** (e.g. jaato-premium) plug in through the `jaato.extensions` entry-point group to add session hooks, WS interceptors, and custom verbs.
@@ -109,3 +114,4 @@ A developer runs `jaato-server --ipc-socket /tmp/jaato.sock --daemon`. The daemo
 - `jaato-server/server/websocket.py:1304` — SHA-256 + `hmac.compare_digest` bearer check; 1008 close at `:1335`.
 - `jaato-sdk/jaato_sdk/events.py:62` — `EventType` enum (the shared event protocol families).
 - `jaato/docs/architecture.md:5` — "Server-First Architecture" overview + `SessionInfoEvent` snapshot-on-connect.
+- `jaato-sdk/jaato_sdk/client/ipc.py:229` (`auto_start=True` default), `:942-1016` (`_auto_start_server`: PID/stale-socket check → `python -m server --ipc-socket <path> --daemon`, env not on CLI) — client-side daemon auto-start with defaults.
