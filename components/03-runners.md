@@ -52,9 +52,9 @@ Daemon-side, runner-tier plugins become thin stubs via `RunnerForwardingMixin`, 
 
 ## Lifecycle / flow
 
-1. A `session.new` request arrives; the daemon provisions the `jaato-ws-{session_id}` AppArmor profile into the kernel.
-2. `spawn_session_runner` claims a warm pool slot **or** cold-spawns via `RunnerSpawner.spawn` (`runner_spawn.py:188-278`).
-3. The runner self-confines (`aa_change_profile` + verify `/proc/self/attr/current`), then imports plugins under the profile (`runner/__main__.py:552-583`).
+1. A `session.new` request arrives; **the daemon provisions the session's AppArmor profile** — `AppArmorManager.provision_profile` (`apparmor.py:904`) *renders* `jaato-ws-{session_id}` from the base template **plus the plugin-contributed rules**, then `apparmor_parser`-**loads it into the kernel** (`apparmor.py:55`). The runner does **not** author this profile; the daemon does, before the runner exists. The session id in the name is the literal session id (timestamp form), so the profile ↔ session mapping is 1:1 and visible in the name.
+2. `spawn_session_runner` claims a warm pool slot **or** cold-spawns via `RunnerSpawner.spawn`, passing the profile name in the bootstrap envelope (`envelope.profile_name`, already loaded in the kernel by step 1) (`runner_spawn.py:118`, `:188-278`).
+3. The runner **self-confines *into* that daemon-provisioned `jaato-ws-{session_id}` profile** — it calls `aa_change_profile("jaato-ws-{session_id}")` to *transition itself into* the already-loaded profile (then verifies `/proc/self/attr/current`), and only then imports plugins, now under the profile (`runner/__main__.py:552-583`). "Self-confine" means the runner enters a profile the daemon prepared for it — it never creates its own. *(Empirically confirmed: runner pid `1822007` showed `/proc/<pid>/attr/current = jaato-ws-20260615_205335 (enforce)`, and on slot reuse re-confined into the next session's `jaato-ws-20260615_205419 (enforce)` — see doc 15.)*
 4. The daemon opens a `RunnerRPCClient`, starts the read-loop, and attaches it (`runner_spawn.py:301-319`).
 5. The daemon dispatches `session.bootstrap`; the runner builds `JaatoRuntime` + runner-tier plugins + `JaatoSession` (`runner/session.py:142-390`).
 6. Steady state: model output streams over the socket; tool calls execute inside the runner; permission ASKs / fragment grants / isolated spawns travel back via the runner→daemon handlers.
@@ -101,6 +101,7 @@ A Java cascade runs `discovery → context → codegen` as one logical unit. The
 - `jaato-server/server/runner_spawn.py:188-319` — pool-vs-cold routing, `acquire_slot`, identical post-spawn `RunnerRPCClient` wiring + `set_runner_rpc`.
 - `jaato-server/server/runner/__main__.py:507-623` — session-mode bootstrap order: confine → import plugins → adopt fd 3 → serve RPC; template/slot modes at 125-504.
 - `jaato-server/server/runner/bootstrap.py:123-195` — `confine_to_profile`: `aa_change_profile` + `/proc/self/attr/current` cross-check, no fallback to unconfined.
+- `jaato-server/server/apparmor.py:904` (`AppArmorManager.provision_profile` — daemon renders `jaato-ws-{session_id}` from template + plugin-contributed rules and `apparmor_parser`-loads it), `:13`/`:55`/`:286` (naming + load + profile body) — the profile the runner self-confines *into* is daemon-provisioned, not runner-authored.
 - `jaato-server/server/runner/session.py:142-440` — runner-side `bootstrap_session` (tier-filtered plugin load, `ledger=None`, permission init) + envelope-env apply + `_maybe_self_confine`.
 - `jaato-server/server/runner_rpc_client.py:1-103` / `runner_rpc_server.py:1-130` — daemon-side bidirectional RPC: client read-loop + streaming + `call_threadsafe`; server handler registry.
 - `jaato-server/server/runner_rpc_handlers/{prompt_operator.py:1-30, apparmor_fragment.py:176, daemon_plugin_execute.py:213, spawn_isolated_runner.py:454}` — the four runner→daemon callbacks.
