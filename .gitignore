@@ -1,0 +1,9 @@
+# Source repos synced for grounding — NOT part of this deliverable, do not republish.
+# jaato-premium/ and kb-enablement-2.0/ are PRIVATE; jaato/ is a separate public repo.
+/jaato/
+/jaato-premium/
+/kb-enablement-2.0/
+
+__pycache__/
+*.pyc
+.DS_Store
