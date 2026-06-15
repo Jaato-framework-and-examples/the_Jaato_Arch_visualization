@@ -1,7 +1,7 @@
 # The Runtime / Session / Client Core
 
 > **The agent-runtime heart that a Runner subprocess hosts: a shared `JaatoRuntime` (provider config, plugins, permissions, token ledger) from which cheap per-agent `JaatoSession` objects are spun up to run the function-calling loop, fronted by a backwards-compatible `JaatoClient` facade.**
-> **Layer (bottom→top):** sits *inside* a Runner subprocess, *above* the process plumbing that spawns it, *below* the plugins/tools and model providers it wires together. · **Lives in:** `jaato/jaato-server/shared/jaato_runtime.py`, `jaato_session.py`, `jaato_client.py`, `ai_tool_runner.py`, `token_accounting.py`
+> **Layer (bottom→top):** sits *inside* a Runner subprocess, *above* the process plumbing that spawns it, *below* the plugins/tools and model providers it wires together. · **Lives in:** `jaato/jaato-server/shared/jaato_runtime.py`, `jaato_session.py`, `jaato_client.py`, `ai_tool_runner.py`, `token_accounting.py`; SDK remote clients in `jaato/jaato-sdk/jaato_sdk/client/ipc.py` (`IPCClient`) + `recovery.py` (`IPCRecoveryClient`)
 
 ## What it is
 
@@ -9,7 +9,7 @@ When a jaato Runner subprocess boots, the thing it actually hosts is this core: 
 
 `JaatoRuntime` is the **shared environment**: it holds the provider configuration, the discovered `PluginRegistry`, the `PermissionPlugin`, and the `TokenLedger` — resources that are identical for every agent in the process (`jaato_runtime.py:200`). `JaatoSession` is the **per-agent state**: its own conversation history, model, tool subset, `ToolExecutor`, turn accounting, and the chat/function-call loop (`jaato_session.py:187`). A subagent therefore *shares the runtime but owns its session* — spawning one is just `runtime.create_session(...)`, which is lightweight because nothing shared is rebuilt (`jaato_runtime.py:900`).
 
-`JaatoClient` is a thin **backwards-compatible facade** that wraps one runtime and its main session so older `connect()` / `configure_tools()` / `send_message()` code keeps working (`jaato_client.py:55`). It also exposes `get_runtime()` so callers can reach the shared runtime to create subagent sessions.
+`JaatoClient` is a thin **backwards-compatible facade** that wraps one runtime and its main session so older `connect()` / `configure_tools()` / `send_message()` code keeps working (`jaato_client.py:55`). It also exposes `get_runtime()` so callers can reach the shared runtime to create subagent sessions. Note this is the **in-process** client (the *embedded* API — the agent runs in the caller's own process); it is a different thing from the SDK **remote** clients (`IPCClient` / `IPCRecoveryClient`) that connect *to* a daemon — see "in-process vs remote clients" below.
 
 ## Where it sits in the stack
 
@@ -35,6 +35,15 @@ Each session keeps its own `_history`, `_cancel_token`, `_is_running` flag, `_tu
 
 ### `TokenLedger` — accounting
 Records token events per generation and retries transient quota / rate-limit errors (HTTP 429 / `ResourceExhausted`) with backoff; `summarize()` reports retry/rate-limit counts and `write_ledger()` dumps JSONL (`token_accounting.py:35`, `:44`, `:143`).
+
+### `JaatoClient` (in-process) vs the SDK remote clients (`IPCClient` / `IPCRecoveryClient`)
+Two distinct things are called a "client" in jaato, sitting on opposite sides of the daemon:
+
+- **`JaatoClient`** (`jaato_client.py:55`) is the **in-process facade** documented above — it wraps *this* runtime + main session directly, so the agent runs in the **caller's own process** with no daemon involved (the embedded API). Inside the daemon, `JaatoServer` itself wraps a `JaatoClient`, which is how a server-side session reuses this exact runtime/session core.
+- **`IPCClient`** (`jaato-sdk/jaato_sdk/client/ipc.py:204`) is the SDK's **remote** client: it hosts no runtime — it **connects to a daemon** over the IPC socket, sends request events (`SendMessageRequest`, `PermissionResponseRequest`, …), and consumes the daemon's event stream. It defaults to `auto_start=True` (spins up a daemon if none is running — see doc 01) and enforces a `MIN_SERVER_VERSION` check against the daemon's reported `server_version`, refusing an incompatible daemon with `IncompatibleServerError`.
+- **`IPCRecoveryClient`** (`recovery.py:131`) **wraps `IPCClient`** to add **automatic reconnection** across daemon restarts/drops — it recreates the inner `IPCClient` on each reconnect (`recovery.py:303`) and classifies failures as transient (retry with backoff) vs permanent (`IncompatibleServerError` → no retry). This is the client the **TUI uses by default** (`use_recovery=True`; `jaato-tui/command_mode.py:51`, `backend.py:282`); the cascade driver instead uses a plain `IPCClient` + `cascade_events(cid)` (doc 09).
+
+Mental model: `JaatoClient` = "run the runtime/session **here, in my process**"; `IPCClient`/`IPCRecoveryClient` = "**drive a runtime/session that lives in the daemon's runner**, over the socket" — the *same* conversational surface (send a message, receive events, answer permission/clarification), different locus (embedded vs server-connected). The recoverable wrapper exists because a long-lived TUI must survive a daemon restart without losing its session.
 
 ## Lifecycle / flow
 
@@ -88,7 +97,8 @@ researcher = runtime.create_session(
   - Hub (center-left, emphasized, bold border): **`JaatoRuntime` (shared)** with a stacked list inside: *ProviderConfig · PluginRegistry · PermissionPlugin · TokenLedger*.
   - Spoke 1: **`JaatoSession` — main agent** (with sub-label *history · model · ToolExecutor · turn loop*).
   - Spoke 2: **`JaatoSession` — subagent (researcher)** (same sub-label, faded to show it's a peer).
-  - Facade box overlapping the main session: **`JaatoClient` (facade)**.
+  - Facade box overlapping the main session: **`JaatoClient` (in-process facade)**.
+  - *Outside* the Runner container (top-left, faded "context" style): a small box **"SDK remote client — `IPCClient` / `IPCRecoveryClient` (recoverable; TUI/web)"** with a dashed arrow pointing **through the daemon** into the Runner container, labeled *"drives the same core remotely over the IPC socket (vs `JaatoClient` embedding it in-process)"*. Keep it visually secondary — it's there to show the two entry paths, not to shift focus off the runtime hub.
   - Right side, a horizontal mini-sequence of 4 boxes for the function-call loop: **Model** → **function_calls** → **`ToolExecutor.execute` (thread pool, max 8)** → **results**, with a curved arrow from **results** back to **Model** labeled *"loop until plain text"*.
   - Small chip attached to the loop labeled **`CancelToken`** and another labeled **proactive GC**.
 - **Arrows:**
@@ -111,4 +121,6 @@ researcher = runtime.create_session(
 - `jaato/jaato-server/shared/jaato_session.py:1507` / `:3704` — `request_stop` (CancelToken) and `_maybe_collect_after_turn` (proactive GC).
 - `jaato/jaato-server/shared/ai_tool_runner.py:831` — `ToolExecutor.execute`: registry lookup + permission check + thread-local cancel/output.
 - `jaato/jaato-server/shared/jaato_client.py:55` / `:178` — `JaatoClient` facade wrapping runtime+session; `get_runtime()` for subagent creation.
+- `jaato/jaato-sdk/jaato_sdk/client/ipc.py:204` — `IPCClient`: SDK remote client to the daemon (auto-start, request events, event stream, `MIN_SERVER_VERSION` / `IncompatibleServerError`). Distinct from the in-process `JaatoClient`.
+- `jaato/jaato-sdk/jaato_sdk/client/recovery.py:131` (`IPCRecoveryClient` wraps `IPCClient`), `:303` (recreates inner client on reconnect) — the recoverable client the TUI uses (`jaato-tui/command_mode.py:51`, `backend.py:282`).
 - `jaato/jaato-server/shared/token_accounting.py:35` — `TokenLedger`: token events + rate-limit retry + JSONL ledger.
