@@ -1,7 +1,7 @@
 # The Daemon
 
 > **The long-lived `jaato` server process — a single background daemon that holds all agent sessions in memory, persists them to disk, and lets many clients connect, share, and reconnect without ever losing state.**
-> **Layer (bottom→top):** the bottommost runtime tier; everything else either lives inside this process or connects to it · **Lives in:** PUBLIC `jaato/jaato-server/server/` (entry point `__main__.py`, core `core.py`, orchestration `session_manager.py`, transports `ipc.py` + `websocket.py`, event protocol via the SDK `jaato-sdk/jaato_sdk/events.py`)
+> **Layer (bottom→top):** the bottommost runtime tier — only the OS is below it; the runner subprocesses it spawns are the tier directly **above** it, and clients connect to it from outside · **Lives in:** PUBLIC `jaato/jaato-server/server/` (entry point `__main__.py`, core `core.py`, orchestration `session_manager.py`, transports `ipc.py` + `websocket.py`, event protocol via the SDK `jaato-sdk/jaato_sdk/events.py`)
 
 ## What it is
 
@@ -13,7 +13,7 @@ The orchestration class `JaatoDaemon` (`__main__.py:287`) owns the whole lifecyc
 
 ## Where it sits in the stack
 
-The daemon is the bottom runtime tier. **Below it conceptually** are only the OS and the per-session **runner subprocesses** it spawns (a pre-warm *template* process and N pool *slots* it forks from that template — see "spawns the pool at startup"). **Above it** sit the **clients** — the terminal UI (`jaato-tui`) over the IPC socket and web/remote clients over WebSocket — which never run agent logic themselves; they send request events and render the events the daemon emits back. **Sideways**, the daemon loads **daemon extensions** (e.g. jaato-premium clustering) via the `jaato.extensions` entry-point group, giving them hooks into sessions and transports without modifying the public code.
+The daemon is the **bottom** runtime tier — only the OS sits below it. The **runner subprocesses** it spawns (a pre-warm *template* process and N pool *slots* forked from it — see "spawns the pool at startup") are the tier **directly above** it: they host the per-session agent runtime that executes tools under confinement. (Mind the two axes here: in the OS *process tree* the daemon is the parent and the runners are its children, but in the architecture's bottom→top *layering* the runners sit **above** the daemon because they host the higher-level agent runtime — the daemon, as the foundation, spawns and supervises them.) **Clients** — the terminal UI (`jaato-tui`) over the IPC socket and web/remote clients over WebSocket — attach from **outside**: they never run agent logic, they only send request events and render the events the daemon emits back. **Sideways**, the daemon loads **daemon extensions** (e.g. jaato-premium clustering) via the `jaato.extensions` entry-point group, giving them hooks into sessions and transports without modifying the public code.
 
 ## Responsibilities
 
@@ -74,7 +74,7 @@ jaato-server --restart    # re-launch from saved /tmp/jaato.config.json
 
 ## Relationship to neighboring components
 
-The daemon is the host process for the **`JaatoServer`** core (one per session) and the **`SessionManager`** that orchestrates them. Beneath it, it spawns and supervises the **runner template + pool** of subprocesses that actually execute tools under confinement, and as **subreaper** it keeps custody of any that get orphaned. Above it, **clients** (the `jaato-tui` terminal UI over IPC, web clients over WebSocket) connect, drive sessions with request events, and render the daemon's emitted events — they hold no durable agent state of their own. Sideways, **daemon extensions** (e.g. jaato-premium) plug in through the `jaato.extensions` entry-point group to add session hooks, WS interceptors, and custom verbs.
+The daemon is the host process for the **`SessionManager`** and, per session, a **`JaatoServer`** core. It **spawns and supervises** the **runner template + pool** of subprocesses that actually execute tools under confinement — the tier **directly above** it in the stack. (It is their process-*parent* and, as **subreaper**, keeps custody of any that get orphaned; in the layering they are nonetheless the tier above, since they host the agent runtime.) **Clients** (the `jaato-tui` terminal UI over IPC, web clients over WebSocket) connect from outside, drive sessions with request events, and render the daemon's emitted events — they hold no durable agent state of their own. Sideways, **daemon extensions** (e.g. jaato-premium) plug in through the `jaato.extensions` entry-point group to add session hooks, WS interceptors, and custom verbs.
 
 ## Example
 
@@ -82,21 +82,22 @@ A developer runs `jaato-server --ipc-socket /tmp/jaato.sock --daemon`. The daemo
 
 ## Diagram brief (for illustration)
 
-- **Layout:** a layered stack, drawn top-to-bottom, with the **Daemon** as a large emphasized container band in the middle and clients above it, runner subprocesses below it.
+- **Layout:** a **bottom-to-top** layered stack (matching the deck's bottom→top ordering). A thin `Operating System` strip at the very bottom; the **Daemon** as a large emphasized container band sitting on it; the **runner subprocess tier the daemon spawns drawn directly *above* the daemon**; and **clients** drawn off to the **left**, attaching over the sockets (they are external consumers, not a stack layer).
 - **Boxes:**
-  - Top row (Clients): `jaato-tui (Terminal UI)` and `Web / Remote Client`.
-  - Middle band (emphasized, labeled **"JaatoDaemon — `jaato-server` (persists independently of clients)"**) containing, left-to-right: a transports sub-row `JaatoIPCServer (Unix socket, unauthenticated)` and `JaatoWSServer (WebSocket + bearer auth)`; below that `SessionManager`; and inside `SessionManager` three stacked session boxes each labeled `Session → JaatoServer → .jaato/sessions (persisted)`. Place a small side box inside the band labeled `Daemon Extensions (jaato.extensions)` and another labeled `CompositeEventSink`.
-  - Bottom row (subprocesses): `Runner Template (warm imports)` and two `Pool Slot` boxes forked from it.
+  - Bottom strip: `Operating System`.
+  - Daemon band (emphasized, labeled **"JaatoDaemon — `jaato-server` (persists independently of clients)"**) containing, left-to-right: a transports sub-row `JaatoIPCServer (Unix socket, unauthenticated)` and `JaatoWSServer (WebSocket + bearer auth)`; below that `SessionManager`; and inside `SessionManager` three stacked session boxes each labeled `Session → JaatoServer → .jaato/sessions (persisted)`. Place a small side box inside the band labeled `Daemon Extensions (jaato.extensions)` and another labeled `CompositeEventSink`.
+  - Tier **above** the daemon (subprocesses it spawns): `Runner Template (warm imports)` and two `Pool Slot` boxes forked from it.
+  - Left side (external clients): `jaato-tui (Terminal UI)` and `Web / Remote Client`.
 - **Arrows:**
   - `jaato-tui` ⇄ `JaatoIPCServer` labeled "length-prefixed JSON events".
   - `Web Client` ⇄ `JaatoWSServer` labeled "Bearer token; 1008 on auth fail".
   - Both transports → `SessionManager` labeled "request events".
-  - `SessionManager` → clients (a single arrow back up through CompositeEventSink) labeled "SessionInfoEvent snapshot + agent/tool/permission events".
+  - `SessionManager` → clients (a single arrow back out through CompositeEventSink) labeled "SessionInfoEvent snapshot + agent/tool/permission events".
   - `Runner Template` → each `Pool Slot` labeled "fork (no exec)".
-  - A dashed arrow from each `Pool Slot` up to a `Session` labeled "claimed at session start".
-  - A curved dashed arrow from the bottom subprocesses back up into the Daemon band labeled "PR_SET_CHILD_SUBREAPER → orphans re-parent to daemon".
-- **Emphasis:** highlight the entire Daemon band (bold border / accent fill) — it is the subject; keep clients and runners visually secondary.
-- **Caption:** "The Daemon: one long-lived process holding all sessions in memory, serving many clients over IPC and WebSocket, and supervising a warm pool of runner subprocesses below it."
+  - A dashed arrow from each `Session` (in the daemon band) **up** to a `Pool Slot` labeled "claims a warm slot at session start; drives it over RPC".
+  - A curved dashed arrow from the runner tier back **down** into the Daemon band labeled "PR_SET_CHILD_SUBREAPER → orphans re-parent to daemon".
+- **Emphasis:** highlight the entire Daemon band (bold border / accent fill) — it is the subject and the bottom tier; keep clients and the runner tier visually secondary. The runner tier sits **above** the daemon (the daemon spawns it) — do **not** draw the runners below the daemon.
+- **Caption:** "The Daemon: the bottom runtime tier — one long-lived process holding all sessions in memory, serving many clients over IPC and WebSocket, and spawning + supervising the warm runner-subprocess tier above it."
 
 ## Source references
 - `jaato-server/server/__main__.py:287` — `JaatoDaemon` class; `start()` wiring sequence at `:386`.
