@@ -7,14 +7,22 @@ a PPT/HTML slide. Combine each doc's prose + its generated image per slide.
 
 ## Layout
 
+This repo contains only the documentation:
+
 ```
-the_Jaato_Arch_visualization/
+the_Jaato_Arch_visualization/        # this repo
 ├── README.md            ← this index
 ├── TEMPLATE.md          ← the shared section structure + style spec every doc follows
-├── components/          ← the 17 standalone component docs (00 overview + 01–16)
-├── jaato/               ← public source repo (github: Jaato-framework-and-examples/jaato)
-├── jaato-premium/       ← premium source (reactor engine; cascades are reactor-driven) [synced]
-└── kb-enablement-2.0/   ← reference deployment: the production cascade (.jaato/ + driver) used by 09/10 [synced, read-only]
+└── components/          ← the 17 standalone component docs (00 overview + 01–16)
+```
+
+The docs are grounded in three source trees that are cloned **locally** for reference and are
+**git-ignored — not part of this repo** (two are private):
+
+```
+jaato/             public source repo (github: Jaato-framework-and-examples/jaato)
+jaato-premium/     PRIVATE — premium source (reactor engine; cascades are reactor-driven)
+kb-enablement-2.0/ PRIVATE — reference deployment: the production cascade (.jaato/ + driver) used by 09/10
 ```
 
 ## Components (bottom → top)
