@@ -79,10 +79,16 @@ teardown); it is what reactors and cascade drivers observe, and it is why a casc
   `cascade_driver_id`. Do **not** confuse this with the premium `flow_runner` / `kind: Flow` /
   `ScriptedFlowRunner` engine — that is a separate "flows" mechanism, slated to be dropped, and is
   deliberately **not** documented in this pack.
-- **cascade-as-client is design-stage.** Promoting `cascade_driver_id` to a first-class observer client
-  identity (`_cascade:{cid}`) is a locked-but-not-yet-shipped design; today reactor-spawned stage
-  sessions still attach under the synthetic `_HEADLESS_CLIENT_ID`. The per-component docs label which
-  parts are shipped vs design.
+- **cascade-as-client is shipped (the design doc header is stale).** Promoting `cascade_driver_id` to a
+  first-class observer client identity (`_cascade:{cid}`) is **implemented and tested** in jaato-server —
+  the cascade-client registry (`_cascade_clients`, `session_manager.py:318`), `register_in_process_client`
+  (`:2990`), the `cascade.register`/`unregister`/`cancel` IPC verbs (`command_router.py:217-225`,
+  `_cascade:{cid}:{client_id}` at `:540`), `cancel_cascade`, and `test_cascade_as_client_phase1.py` /
+  `phase2.py` — even though `docs/design/cascade-as-client.md` still reads "Phase 0". This is **separate**
+  from how stage sessions are identified: reactor-spawned **stage** sessions attach under the synthetic
+  `_HEADLESS_CLIENT_ID` (`session_manager.py:4688`), and their events are bridged to the `_cascade:{cid}`
+  owner via `_dispatch_to_cascade_clients`. The two coexist by design — the CID/observer identity is
+  production, and keeping the stage placeholder is intentional, not a sign of "not yet shipped".
 
 ## Diagram brief (for illustration)
 
