@@ -51,12 +51,10 @@ On each call the incoming `args` dict **is** the payload; it is validated with `
 
 ## Configuration / authoring
 
-```json
-// .jaato/profiles/refund.json
-{
-  "name": "refund",
-  "completion_payload_schema": "completion_schemas/refund.json"
-}
+```yaml
+# .jaato/profiles/refund.yaml
+name: refund
+completion_payload_schema: completion_schemas/refund.json   # points to the JSON-Schema file below
 ```
 
 ```json

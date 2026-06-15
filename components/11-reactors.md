@@ -92,7 +92,7 @@ def execute(params, event, ctx):
 
 - **Session / event bus (below):** the reactor is just another subscriber on the same bus SDK clients use; it attaches via a session hook and matches everything (`engine.py:162-173`).
 - **Cascades (alongside/below):** reactors can trigger and steer cascades — `create_session(..., cascade_driver_id=...)` reuses warm pool slots and routes cascade lifecycle events back to `ReactorExtension._handle_cascade_event` (`README.md:158-179`, `extension.py:200-233`).
-- **Personas / agents (steered):** forks resolve `target_agent` from `.jaato/agents/<name>.md` and a `profile` from `.jaato/profiles/<name>.json`; `inject_prompt` steers the live persona mid-flight (the drift monitor's nudge) (`README.md:139-140`).
+- **Personas / agents (steered):** forks resolve `target_agent` from `.jaato/agents/<name>.md` and a `profile` from `.jaato/profiles/<name>.yaml`; `inject_prompt` steers the live persona mid-flight (the drift monitor's nudge) (`README.md:139-140`).
 - **SDK clients (above):** never call the reactor directly; they observe its effects as events and can subscribe to gate broadcasts to auto-attach (`jaato/docs/reactor-tenant-guide.md:462-489`).
 
 ## Example

@@ -1,13 +1,13 @@
 # Profiles (Agent Profiles / `SubagentProfile`)
 
-> **A profile is a named JSON/YAML file that declaratively parameterizes a session or subagent — which model/provider it runs on, which plugins (tools) it gets, per-plugin config, GC strategy, environment, and completion contracts.**
-> **Layer (bottom→top):** the declarative configuration substrate that a session/agent is built from — it sits *below* the runtime that consumes it and *above* nothing (it is hand-authored config). · **Lives in:** PUBLIC `jaato/jaato-server/shared/plugins/subagent/config.py` (canonical `SubagentProfile` dataclass) · profile files in `.jaato/profiles/*.json|*.yaml` · premium management in `jaato-premium/jaato_premium/profile_manager/`.
+> **A profile is a named YAML file (JSON also accepted) that declaratively parameterizes a session or subagent — which model/provider it runs on, which plugins (tools) it gets, per-plugin config, GC strategy, environment, and completion contracts.**
+> **Layer (bottom→top):** the declarative configuration substrate that a session/agent is built from — it sits *below* the runtime that consumes it and *above* nothing (it is hand-authored config). · **Lives in:** PUBLIC `jaato/jaato-server/shared/plugins/subagent/config.py` (canonical `SubagentProfile` dataclass) · profile files in `.jaato/profiles/*.yaml` (YAML preferred; `*.json` also accepted) · premium management in `jaato-premium/jaato_premium/profile_manager/`.
 
 ## What it is
 
 In the jaato agent framework, an agent session needs a lot of decisions made before it can run: which LLM and provider to use, which tools (plugins) to expose, how aggressively to garbage-collect context when it fills up, what environment variables to inject, and whether the agent must produce a structured result. A **profile** packages all of those decisions into one declarative file so they are version-controlled, reusable, and selectable by name instead of being hardcoded per launch.
 
-Concretely, a profile is a JSON or YAML file in `.jaato/profiles/`. At load time it is parsed into a `SubagentProfile` dataclass (`config.py:872`). The *same* dataclass is used both for the main session created from the CLI/SDK (`session.new --profile <name>`) and for subagents the parent delegates to (`spawn_subagent`) — "agent profile" and "subagent profile" are the same schema (`jaato/CLAUDE.md` "Agent Profiles": "Profile schema (same as `SubagentProfile`)").
+Concretely, a profile is a YAML file in `.jaato/profiles/` (YAML is the preferred authoring syntax; JSON is also accepted and parsed identically). At load time it is parsed into a `SubagentProfile` dataclass (`config.py:872`). The *same* dataclass is used both for the main session created from the CLI/SDK (`session.new --profile <name>`) and for subagents the parent delegates to (`spawn_subagent`) — "agent profile" and "subagent profile" are the same schema (`jaato/CLAUDE.md` "Agent Profiles": "Profile schema (same as `SubagentProfile`)").
 
 A profile carries *runtime configuration only*. The agent's *instructions* (its system prompt / role) are authored separately as Markdown under `.jaato/agents/*.md`; the profile's own `system_instructions` field is explicitly **deprecated** in favor of those agent files (`config.py:889`, `jaato_subagent_profiles_reference.md:52-54`). When both are supplied, the agent's rendered Markdown replaces `system_instructions`.
 
@@ -29,7 +29,7 @@ Below the profile there is nothing else to configure — it is the bottom, hand-
 ## Key concepts & structure
 
 ### `SubagentProfile` — the canonical schema (`config.py:872`)
-The required fields are `name` and `description`. `plugins` is **required** in a profile *file* (absent is rejected; use `"plugins": []` for the minimal framework set of permission/reliability/lifecycle only) — see the explicit error at `config.py:1866-1877`. Other notable fields: `model`, `provider`, `max_turns` (default 10), `gc`, `env`, `plugin_configs`, `inherits`, `completion_payload_schema`, `spawn_payload_schema`, `completion_processors`, `runtime_limits`, `model_tiers`, `apparmor`, `apparmor_fragments`, `quirks`, and the derived `preloaded_plugins` / `tool_scopes`.
+The required fields are `name` and `description`. `plugins` is **required** in a profile *file* (absent is rejected; use `plugins: []` for the minimal framework set of permission/reliability/lifecycle only) — see the explicit error at `config.py:1866-1877`. Other notable fields: `model`, `provider`, `max_turns` (default 10), `gc`, `env`, `plugin_configs`, `inherits`, `completion_payload_schema`, `spawn_payload_schema`, `completion_processors`, `runtime_limits`, `model_tiers`, `apparmor`, `apparmor_fragments`, `quirks`, and the derived `preloaded_plugins` / `tool_scopes`.
 
 ### `plugins` list syntax + modifiers (`config.py:290-418`)
 Each entry is a plugin name that may carry a parenthesised modifier with two orthogonal knobs, parsed by `parse_plugin_entry`:
@@ -68,20 +68,27 @@ For a subagent the active model is resolved `profile.model` → `SubagentConfig.
 
 Files live in `.jaato/profiles/`. Minimal valid profile needs `name`, `description`, and `plugins`. Example (provider knobs + GC + preload + tool scope):
 
-```json
-{
-  "name": "researcher",
-  "description": "Deep research profile",
-  "model": "claude-sonnet-4-20250514",
-  "provider": "anthropic",
-  "plugins": ["cli", "web_search", "memory", "todo(preload)", "file_edit([readFile])"],
-  "plugin_configs": {
-    "anthropic": { "api_params": { "temperature": 0.0, "max_tokens": 4096 } },
-    "web_search": { "max_results": 5, "region": "us-en" }
-  },
-  "gc": { "type": "budget", "threshold_percent": 80.0, "pressure_percent": 0 },
-  "env": { "PROJECT_ROOT": "${workspaceRoot}", "DB_PASSWORD": "vault://secret/myapp#db_password" }
-}
+```yaml
+name: researcher
+description: Deep research profile
+model: claude-sonnet-4-20250514
+provider: anthropic
+plugins:
+  - cli
+  - web_search
+  - memory
+  - "todo(preload)"
+  - "file_edit([readFile])"
+plugin_configs:
+  anthropic:
+    api_params: { temperature: 0.0, max_tokens: 4096 }
+  web_search:
+    max_results: 5
+    region: us-en
+gc: { type: budget, threshold_percent: 80.0, pressure_percent: 0 }
+env:
+  PROJECT_ROOT: "${workspaceRoot}"
+  DB_PASSWORD: "vault://secret/myapp#db_password"
 ```
 
 (Schema example adapted from `jaato/CLAUDE.md` "Agent Profiles" and `jaato_subagent_profiles_reference.md:100-142`.)
@@ -97,23 +104,31 @@ Files live in `.jaato/profiles/`. Minimal valid profile needs `name`, `descripti
 
 ## Example
 
-A real premium profile (`jaato-premium/jaato_premium/profiles/skill-mod-code-002-retry.json`) shows the pieces working together:
+A real premium profile — `skill-mod-code-002-retry` (premium's `profile_manager` persists it as JSON; shown here in the preferred YAML form) — shows the pieces working together:
 
-```json
-{
-  "name": "skill-mod-code-002-retry",
-  "description": "[GENERATE/ADD Flow] Assist adding retry patterns using mod-code-002 templates and ERI guidance.",
-  "plugins": ["artifact_tracker", "cli", "filesystem_query", "lsp",
-              "references", "template(preload)", "memory", "auto_steering"],
-  "plugin_configs": {
-    "auto_steering": { "rules": [{ "id": "template-preference", "inject_every_n_turns": 2, "enabled": true }] },
-    "references": { "preselected": ["mod-code-002-retry-java-resilience4j",
-                                    "eri-code-009-retry-java-resilience4j"],
-                    "exclude_tools": ["selectReferences"] }
-  },
-  "system_instructions": "Use module templates and ERI to insert retry patterns into codebase.",
-  "max_turns": 15
-}
+```yaml
+name: skill-mod-code-002-retry
+description: "[GENERATE/ADD Flow] Assist adding retry patterns using mod-code-002 templates and ERI guidance."
+plugins:
+  - artifact_tracker
+  - cli
+  - filesystem_query
+  - lsp
+  - references
+  - "template(preload)"
+  - memory
+  - auto_steering
+plugin_configs:
+  auto_steering:
+    rules:
+      - { id: template-preference, inject_every_n_turns: 2, enabled: true }
+  references:
+    preselected:
+      - mod-code-002-retry-java-resilience4j
+      - eri-code-009-retry-java-resilience4j
+    exclude_tools: [selectReferences]
+system_instructions: "Use module templates and ERI to insert retry patterns into codebase."
+max_turns: 15
 ```
 
 Here `template(preload)` forces the templating tools into the initial context, `references` is steered to two preselected knowledge entries with one tool excluded, and `auto_steering` is given a per-turn nudge rule — all without touching any framework code.
@@ -122,7 +137,7 @@ Here `template(preload)` forces the templating tools into the initial context, `
 
 - **Layout:** Left-to-right flow with a layered detail panel. A single authored file on the left fans through a resolution pipeline into a running session on the right.
 - **Boxes:**
-  1. `.jaato/profiles/researcher.json` (a document icon) — labeled "Profile file (JSON/YAML)".
+  1. `.jaato/profiles/researcher.yaml` (a document icon) — labeled "Profile file (YAML; JSON also accepted)".
   2. A stacked "3-tier discovery" box: top→bottom rows "Workspace .jaato/profiles" / "User ~/.jaato/profiles" / "Premium entry-points" — labeled "discover_profiles()".
   3. "resolve_profiles() — flatten inheritance, detect cycles/conflicts".
   4. **Center, emphasized:** a large box `SubagentProfile` with an inner field list: `name` · `description` · `model` / `provider` · `plugins [todo(preload), file_edit([readFile])]` · `plugin_configs {anthropic.api_params, web_search}` · `gc {type, threshold%}` · `env {${VAR}, vault://}` · `inherits[]` · `completion_payload_schema`.

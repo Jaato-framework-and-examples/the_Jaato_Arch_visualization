@@ -100,14 +100,12 @@ Why plugins ship fragments — concrete examples (verbatim rule text):
 
 ## Configuration / authoring
 
-In a profile JSON (`.jaato/profiles/<name>.json`, schema = `SubagentProfile`):
-```json
-{
-  "name": "codegen",
-  "plugins": ["cli", "file_edit", "lsp", "memory"],
-  "apparmor": true,
-  "apparmor_fragments": ["host_validator"]
-}
+In a profile (`.jaato/profiles/<name>.yaml`, schema = `SubagentProfile`):
+```yaml
+name: codegen
+plugins: [cli, file_edit, lsp, memory]
+apparmor: true
+apparmor_fragments: [host_validator]
 ```
 - `apparmor: true` opts the session into kernel confinement (`subagent/config.py:1025`; default `false` until the planned PR-B flip).
 - `apparmor_fragments: ["host_validator"]` composes *only* `host_validator.rules` from the search path; `[]` composes none; omitting the key composes all (`subagent/config.py:1093`).

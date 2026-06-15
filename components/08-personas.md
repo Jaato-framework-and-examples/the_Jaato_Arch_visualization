@@ -13,7 +13,7 @@ Because the persona is plain Markdown rendered into the prompt, it can be enrich
 
 ## Where it sits in the stack
 
-Directly **below** a persona is its **Profile** (`.jaato/profiles/<name>.json`, schema `SubagentProfile`), which supplies the technical substrate: model, provider, plugins, `spawn_payload_schema`, `completion_payload_schema`, GC. An agent Markdown file may name its substrate via a `default_profile` frontmatter key. Directly **above**, personas are consumed by whatever drives a session: the main session via `session.new --agent <name>`, cascade stages, and **reactors** that spawn headless sessions. Sideways, the persona's text is read by enrichment plugins — most importantly the **memory** plugin, which scans the rendered prompt for tags (the basis of cross-session continuity).
+Directly **below** a persona is its **Profile** (`.jaato/profiles/<name>.yaml`, schema `SubagentProfile`), which supplies the technical substrate: model, provider, plugins, `spawn_payload_schema`, `completion_payload_schema`, GC. An agent Markdown file may name its substrate via a `default_profile` frontmatter key. Directly **above**, personas are consumed by whatever drives a session: the main session via `session.new --agent <name>`, cascade stages, and **reactors** that spawn headless sessions. Sideways, the persona's text is read by enrichment plugins — most importantly the **memory** plugin, which scans the rendered prompt for tags (the basis of cross-session continuity).
 
 ## Responsibilities
 
@@ -81,7 +81,7 @@ The NIM smoke-test ships a real persona, `nim-tools.md`: a no-frontmatter Markdo
 
 - **Layout:** a vertical layered stack with one side-pointing arrow to a plugin, and a horizontal session timeline at the bottom.
 - **Boxes (bottom→top of the stack):**
-  - `Profile (.jaato/profiles/<name>.json)` — sub-label "model · provider · plugins · spawn_payload_schema · completion_payload_schema · GC". This is the chassis.
+  - `Profile (.jaato/profiles/<name>.yaml)` — sub-label "model · provider · plugins · spawn_payload_schema · completion_payload_schema · GC". This is the chassis.
   - `Persona (.jaato/agents/<name>.md)` — HIGHLIGHTED box. Sub-label "role · voice · knowledge · {{params}} · {{!py:prefetch}} · {{continuity_scope}}".
   - Above the persona, three small consumer boxes side by side: `Main session (--agent)`, `Cascade stage`, `Reactor (headless spawn)`.
   - To the right of the Persona box, a separate box `Memory plugin (enrich_prompt)`.

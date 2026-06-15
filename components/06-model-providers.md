@@ -68,7 +68,7 @@ The repo ships one subdirectory per backend (`ls jaato-server/shared/plugins/mod
 
 ## Configuration / authoring
 
-A provider is selected per Profile (`.jaato/profiles/<name>.json`) via `provider` + `model`, with per-provider knobs under `plugin_configs.<provider>`. Knobs are **namespaced into layers**:
+A provider is selected per Profile (`.jaato/profiles/<name>.yaml`) via `provider` + `model`, with per-provider knobs under `plugin_configs.<provider>`. Knobs are **namespaced into layers**:
 
 | Layer | Purpose |
 |-------|---------|
@@ -79,17 +79,17 @@ A provider is selected per Profile (`.jaato/profiles/<name>.json`) via `provider
 
 Anthropic has no `routing` layer because its API has no gateway routing extension (`jaato/CLAUDE.md`, Anthropic profile-knobs section). OpenRouter uses all four (`jaato/CLAUDE.md`, OpenRouter section).
 
-```json
-{
-  "name": "researcher",
-  "model": "claude-sonnet-4-5-20250929",
-  "provider": "anthropic",
-  "plugin_configs": {
-    "anthropic": {
-      "api_params": { "temperature": 0.0, "max_tokens": 4096, "enable_thinking": true, "thinking_budget": 10000 }
-    }
-  }
-}
+```yaml
+name: researcher
+model: claude-sonnet-4-5-20250929
+provider: anthropic
+plugin_configs:
+  anthropic:
+    api_params:
+      temperature: 0.0
+      max_tokens: 4096
+      enable_thinking: true
+      thinking_budget: 10000
 ```
 
 `ProviderConfig` (`base.py:68-103`) carries the auth-side fields (`project`, `location`, `api_key`, `credentials_path`, `use_vertex_ai`, `auth_method`, `target_service_account`, plus `extra` for provider-specific config). Context-window size resolves by a uniform precedence — provider auto-detect → per-profile `context_length` → env var — via `resolve_context_window()` (`base.py:106-149`).

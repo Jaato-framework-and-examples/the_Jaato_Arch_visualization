@@ -61,16 +61,15 @@ Outcome of a run, with three (well, four) buckets: `written` (file paths; `""` s
 
 ## Configuration / authoring
 
-A profile (`SubagentProfile` / `.jaato/profiles/*.json`) declares a `completion_processors` list, parsed by `_parse_completion_processors` (`config.py:979`, `1160-1244`). Each entry:
+A profile (`SubagentProfile` / `.jaato/profiles/*.yaml`) declares a `completion_processors` list, parsed by `_parse_completion_processors` (`config.py:979`, `1160-1244`). Each entry:
 
-```json
-"completion_processors": [
-  {"script": "scripts/processors/codegen_files_exist.py",
-   "on_error": "fail_completion"},
-  {"script": "scripts/processors/render_audit.py",
-   "output": "out/{case_id}/audit.log",
-   "description": "Persist an audit record per case"}
-]
+```yaml
+completion_processors:
+  - script: scripts/processors/codegen_files_exist.py
+    on_error: fail_completion
+  - script: scripts/processors/render_audit.py
+    output: "out/{case_id}/audit.log"
+    description: Persist an audit record per case
 ```
 
 `output` is optional (omit → side-effect/validation-only). `on_error` must be `fail_completion` or `warn` (invalid → defaults to `fail_completion` with a warning). `phase` must be `finalization` or `completeness`. The script file lives under `.jaato/scripts/processors/` and is plain kb Python — yes, processors *are* custom user scripts (`config.py:1186-1244`). Across a parent→child profile cascade, processor lists concatenate (`config.py:1613-1622`).
@@ -128,5 +127,5 @@ def validate(payload, context):
 - `jaato-server/shared/completion_processors.py:375-581` — `invoke_processors`: validate-then-render, `ProcessorResult` shapes, phase filter, atomic write, error bucketing.
 - `jaato-server/shared/lifecycle_tools.py:714-825` — `signal_completion`: schema validate → load → ledger → invoke (finalization) → fatal blocks/retry → `on_agent_completed`.
 - `jaato-server/shared/plugins/subagent/config.py:785-869` — `CompletionProcessor` dataclass: `script`, `output`, `on_error`, `description`, `phase`.
-- `jaato-server/shared/plugins/subagent/config.py:1160-1244` — `_parse_completion_processors`: profile JSON → entries; field validation/defaults.
+- `jaato-server/shared/plugins/subagent/config.py:1160-1244` — `_parse_completion_processors`: profile config → entries; field validation/defaults.
 - `jaato-server/shared/tests/test_completion_processors.py:722-765` — end-to-end: validator reads `context.tool_calls`, blocks a fabricated completion claim.
