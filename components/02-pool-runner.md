@@ -40,6 +40,11 @@ The daemon's handle on a template-forked child: `.pid`, `.sock` (daemon-side RPC
 - **READY handshake:** template sends `"READY\n"` after discovery; daemon blocks on it instead of sleeping (`runner_template.py:169`).
 - **Telemetry counters** (`get_telemetry()`, `:190-230`, `:406`): `pool_slot_acquired_total`, `pool_acquire_miss_total`, `pool_replenish_success_total`, `pool_replenish_failures_total`, `template_respawn_attempts_total`, `template_respawn_failures_total` (plus Phase 2 cascade counters `cascade_slot_reuse_hits_total`, `cascade_slot_reuse_misses_total`, `cascade_slots_idle_torndown_total`).
 
+### Why fork (no exec) — and where isolation actually comes from
+A common misconception: fork is *not* the isolation mechanism. **Fork-no-exec exists for one reason — to inherit the template's already-warm imports** (the imported runner-tier plugin modules + the populated `PluginRegistry`) so each session skips the ~30s import + discovery cost. A deliberate **module-global fork-safety audit** (`runner_prewarm_pool_plan.md:44-49`) verified this is safe across the runner-tier plugin set with no per-plugin opt-in: module state is read-only (regex compilations, frozensets, constants), thread-locals are empty on the child, and no lock is held at template-fork time.
+
+**Isolation and leak-avoidance are a *separate* property, owned by the per-session *subprocess* model** — not by fork. Each session runs in its own subprocess for "kernel-enforced AppArmor + cgroup attach, crash isolation, workspace boundary cleanliness" (`runner_prewarm_pool_plan.md:19`). Because fork *inherits* the template's memory (the opposite of a blank slate), clean per-session state is guaranteed three ways: (1) the **template holds only import-level state**, never any session's data, so every forked slot starts session-clean; (2) in the baseline design a slot is **single-use** — "Slot exits when session ends. No state reuse — clean isolation" (`:98`) — and a fresh slot is forked to replace it; (3) on the cascade-**reuse** path (where a slot deliberately survives across same-cascade sessions to stay warm), the daemon calls **`reset_for_slot_reuse`** on the runner (`core.py:5386`) to clear per-session state before the next session, which is what prevents cross-session leaks there. So: fork → speed; subprocess + confinement + single-use/reset → isolation.
+
 ### Staying warm — and going cold (idle lifecycle)
 A slot is "warm" because it is an already-forked process holding the template's imported modules resident in memory; "cold" means no such process exists and a session must pay the full ~30s fork + import + discovery.
 
@@ -115,4 +120,5 @@ A 6-step cascade with `JAATO_RUNNER_POOL_SIZE=2`: at startup the template warms 
 - `jaato-server/server/runner_spawn.py:52-83` — `_pool_enabled` (env var, default-on).
 - `jaato-server/server/runner_spawn.py:188-219` — three pool routing gates + slot→`SpawnedRunner` wrap.
 - `jaato/docs/design/runner_prewarm_pool_plan.md:13,72-98,302` — measured 5x speedup, fork-from-template flow, decision log.
+- `jaato/docs/design/runner_prewarm_pool_plan.md:19` (subprocess isolation rationale: AppArmor/cgroup/crash/workspace), `:44-49` (fork-safety audit), `:98` ("single-use slot — clean isolation") + `jaato-server/server/core.py:5386` (`reset_for_slot_reuse` clears per-session state on the cascade-reuse path) — why fork ≠ isolation.
 - `jaato/CLAUDE.md` "Pre-warm Runner Pool" — env vars, subreaper, READY, telemetry, routing gates.
