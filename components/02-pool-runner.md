@@ -65,7 +65,7 @@ A slot is "warm" because it is an already-forked process holding the template's 
 ## Configuration / authoring
 
 - `JAATO_RUNNER_POOL_ENABLED` — enable pool routing. **Default-on** since PR 5e; disable with `false`/`0`/`no`/`off` (`runner_spawn.py:52-83`).
-- `JAATO_RUNNER_POOL_SIZE` — number of idle slots to keep (default 2); raise for cascades that spawn many sessions in tight succession (CLAUDE.md, `runner_pool.py:158-162`).
+- `JAATO_RUNNER_POOL_SIZE` — number of idle slots to keep warm (default 2). Raise it only when sessions start **concurrently** — i.e. a cascade that **fans out** stages in parallel, where each simultaneous stage needs its *own* warm slot. It does **not** speed up a cascade of **sequential** stages: there the next stage reuses the *same* warm slot via the `slot.settled` handoff (the reactor fires the next stage on slot-availability), so a single warm slot suffices no matter how many steps run back-to-back. Grounding: `runner_pool.py:156-162` correctly says raise it for "many **concurrent** sessions"; the CLAUDE.md phrasing "many sessions in tight succession" is misleading and should be corrected to "concurrent".
 
 ```bash
 # Larger pool for a cascade harness; disable later for A/B vs cold-spawn.
@@ -87,7 +87,9 @@ The **Daemon** below owns the `TemplateManager`/`PoolManager` instances and sets
 
 ## Example
 
-A 6-step cascade with `JAATO_RUNNER_POOL_SIZE=2`: at startup the template warms imports once and 2 slots are pre-forked. Step 1 claims a slot (`pool_slot_acquired_total++`); the replenish thread immediately forks a replacement so step 2 finds a warm slot waiting. Because a slot's gone-and-refilled cycle (~50-200ms fork) is tiny next to each step's model-call time, steps 3+ keep hitting warm slots — every step bootstraps in ~7s instead of ~30s (`runner_pool.py:490-498`, `runner_prewarm_pool_plan.md:13`). If the pool is momentarily empty, `acquire_slot` returns `None`, `pool_acquire_miss_total++`, and that session quietly cold-spawns.
+**Sequential cascade (the common case — pool size barely matters).** A linear `discovery → context → … → build_judge` cascade runs one stage at a time and **reuses a single warm slot** across stages via the two-event `slot.settled` handoff: each stage's runner returns to the pool, and the next stage's reactor immediately claims that *same* warm slot. So no matter how many steps run back-to-back, `JAATO_RUNNER_POOL_SIZE=1` is enough; raising it just leaves extra slots idle. Every step still bootstraps in ~7s instead of ~30s (`runner_prewarm_pool_plan.md:13`).
+
+**Fan-out cascade (where pool size actually matters).** A stage that spawns, say, 4 sub-stages **in parallel** needs 4 warm slots *at once*. With `JAATO_RUNNER_POOL_SIZE=4` all four start warm; with the default 2, two of them get `acquire_slot → None` (`pool_acquire_miss_total++`) and cold-spawn (~30s). So size the pool to the cascade's **peak stage concurrency**, not its step count.
 
 ## Diagram brief (for illustration)
 
