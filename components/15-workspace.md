@@ -98,6 +98,27 @@ Why plugins ship fragments — concrete examples (verbatim rule text):
 
 **Composition — how it all becomes one enforced profile.** The final `jaato-ws-{session_id}` profile is the union of: (a) the **base/workspace rules** (`{workspace_path}/ rwkl`, system/venv reads, transitions, integrity denies) from `PROFILE_TEMPLATE`; (b) **per-plugin default fragments** from `resolve_plugin_apparmor_rules` spliced at `{plugin_contributed_rules}`; and (c) **cascade/profile custom fragments** from `apparmor_fragments`, inlined at `{extension_fragments_inline}`. AppArmor semantics make composition order-insensitive (allow rules union, deny rules union, deny wins at equal specificity). The runner then self-confines to this one composed profile.
 
+## Relationship 5 — Resource limits (cgroups), the orthogonal companion
+
+AppArmor answers *"what can this session touch?"*; **cgroups v2** answers the orthogonal *"how much can it consume?"*. They are deliberately separate axes — and the cgroup is keyed to the same identity as the profile and the workspace: **`{cgroups_root}/jaato-ws-{session_id}/`** (`server/cgroups.py`, the explicit companion to `server/apparmor.py`).
+
+A session's caps are declared on the profile as **`runtime_limits`** (`SubagentProfile.runtime_limits` → `RuntimeLimits`, `shared/runtime_limits.py:56-88`), split by *who enforces them*:
+- **Kernel-enforced (cgroup v2):** `memory_max_mb` → `memory.max`, `pids_max` → `pids.max`, `cpu_weight` → `cpu.weight`. `CgroupsManager.provision_cgroup(session_id, limits)` creates the cgroup dir and writes those controller files (`cgroups.py:181`).
+- **App-layer (Python):** `tool_timeout_seconds` (passed to `subprocess.run(timeout=)`) and `max_output_bytes` (truncates captured stdout/stderr) — applied by the `cli` / `interactive_shell` plugins at tool-call time, not by the kernel. These reach the runner via env (`JAATO_RUNNER_TOOL_TIMEOUT_SECONDS` / `JAATO_RUNNER_MAX_OUTPUT_CHARS`, doc 03).
+
+**Attaching a process.** `CgroupsManager.make_attach_callback(session_id)` returns a zero-arg callable used as `subprocess.Popen(preexec_fn=...)`: *between* `fork()` and `exec()` it writes the child's own PID into `cgroup.procs`, so the program comes up already inside the cgroup from instruction zero. A failed write raises `OSError` to the parent `Popen` — a broken cgroup root makes the subprocess **fail to start** rather than run unconfined (chosen over `cgexec`, which needs an extra binary and shells out per command). The daemon wires this as the `cgroup_attach` callback at runner spawn (`session_manager.py:1864-1887`, `runner_spawner.py:206`); warm **pool-slot** runners pass `cgroup_attach=None` today (mid-life migration of an already-forked slot into its session cgroup is follow-up — doc 02), so on that path the kernel caps land on the tool subprocesses via the same preexec hook.
+
+**Lifecycle** mirrors the AppArmor one: `provision_cgroup` (write controller files) → attach via `preexec_fn` → `teardown_cgroup` kills any stragglers with `cgroup.kill` (kernel ≥ 5.14) and removes the directory.
+
+**Graceful degradation** also mirrors AppArmor's: when cgroup v2 is unavailable (v1 host, missing controllers, non-writable root, non-Linux), `is_available()` returns `False` and every mutating method is a no-op — the server runs with no kernel-enforced limits, exactly as AppArmor falls back to directory-only sandboxing.
+
+**Operator setup** (once, as root) parallels the `/etc/apparmor.d/jaato/` setup — create and delegate the cgroup root, enable the controllers:
+```
+sudo mkdir /sys/fs/cgroup/jaato && sudo chown jaato:jaato /sys/fs/cgroup/jaato
+echo "+memory +pids +cpu" | sudo tee /sys/fs/cgroup/jaato/cgroup.subtree_control
+```
+The root defaults to `/sys/fs/cgroup/jaato`; override with `JAATO_CGROUPS_ROOT` (or a systemd user-slice path) when `subtree_control` is delegated elsewhere (`server/__main__.py:491-516`). `runtime_limits` inheritance follows the scalar agreement-or-override rule (doc 07).
+
 ## Configuration / authoring
 
 In a profile (`.jaato/profiles/<name>.yaml`, schema = `SubagentProfile`):
@@ -106,9 +127,11 @@ name: codegen
 plugins: [cli, file_edit, lsp, memory]
 apparmor: true
 apparmor_fragments: [host_validator]
+runtime_limits: { memory_max_mb: 2048, pids_max: 256, cpu_weight: 100, tool_timeout_seconds: 120, max_output_bytes: 1048576 }
 ```
 - `apparmor: true` opts the session into kernel confinement (`subagent/config.py:1025`; default `false` until the planned PR-B flip).
 - `apparmor_fragments: ["host_validator"]` composes *only* `host_validator.rules` from the search path; `[]` composes none; omitting the key composes all (`subagent/config.py:1093`).
+- `runtime_limits` caps resource *consumption* (Relationship 5): the kernel subset (`memory_max_mb`/`pids_max`/`cpu_weight`) is enforced via the per-session cgroup; the app-layer subset (`tool_timeout_seconds`/`max_output_bytes`) by the cli/interactive_shell plugins. Each field is independently optional; `None` means "no limit". Orthogonal to `apparmor` — *how much* vs *what*.
 - Operator-authored fragments live at `<workspace>/.jaato/apparmor-fragments/*.rules` or `~/.jaato/apparmor-fragments/*.rules`. Confined sessions cannot write there — `audit deny {workspace_path}/.jaato/apparmor-fragments/** wlk` (`apparmor.py:336`) blocks a confined runner from authoring its own future-session rules.
 
 ## Example
@@ -131,13 +154,19 @@ flowchart LR
     Plugins -->|"splice plugin_contributed_rules"| Profile
     Cascade -->|"inline extension_fragments_inline"| Profile
     WS -->|"workspace_path substitution"| Profile
-    Profile -->|"self-confine: aa_change_profile (step 1c)"| Runner
+    Profile -->|"self-confine: aa_change_profile (step 1c) — WHAT it can touch"| Runner
     WS -->|"cwd + set_workspace_path broadcast"| Runner
     Runner -.->|"reuse: same pid, re-confine S(N) to S(N+1)"| Runner
     Runner -.->|"default-deny (no access)"| Other
 
+    RL["runtime_limits (RuntimeLimits)"]
+    Cgroup["Cgroup jaato-ws-{session_id} (memory.max / pids.max / cpu.weight)"]
+    RL -->|"kernel caps"| Cgroup
+    Cgroup -->|"preexec cgroup.procs — HOW MUCH it can consume"| Runner
+
     style WS fill:#fff3cd,stroke:#d39e00,stroke-width:2px
     style Profile fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+    style Cgroup fill:#e7f3ff,stroke:#3178c6,stroke-width:2px
 ```
 
 ## Diagram brief (for illustration)
@@ -173,4 +202,7 @@ flowchart LR
 - `jaato-server/server/apparmor.py:1687-1767` — `add_reference_fragment` runtime read grant; RPC handler in `runner_rpc_handlers/apparmor_fragment.py:84-163`.
 - `jaato-server/shared/plugins/subagent/config.py:1025,1093` — `apparmor` opt-in + `apparmor_fragments` (child-replaces-parent).
 - `jaato-server/server/runner/bootstrap.py:123-188` — `confine_to_profile` / `aa_change_profile` self-confine + verify (step 1c).
+- `jaato-server/server/cgroups.py:1-61,121-181` — `CgroupsManager`: cgroup v2 per-session limits, the explicit companion to `server.apparmor`; `is_available`/`provision_cgroup`/`make_attach_callback`/`teardown_cgroup`, graceful degradation, operator setup, preexec-vs-cgexec rationale.
+- `jaato-server/shared/runtime_limits.py:56-88` — `RuntimeLimits`: kernel subset (`memory_max_mb`→`memory.max`, `pids_max`→`pids.max`, `cpu_weight`→`cpu.weight`) + app-layer (`tool_timeout_seconds`, `max_output_bytes`).
+- `jaato-server/server/session_manager.py:1864-1887` — `cgroup_attach = make_attach_callback(session_id)` wired at runner spawn; `server/__main__.py:491-516` — `JAATO_CGROUPS_ROOT` parent-dir override.
 - Design docs (status markers): `docs/runner-cascade-sharing.md` §4.4 (header reads "Phase 0" but is **stale** — slot affinity `runner_pool.py:284` + reuse `runner_spawn.py:280` shipped at server 0.6.150+ with tests; per-reuse AppArmor re-confine **empirically confirmed** — runner pid `1822007` re-confined `jaato-ws-20260615_205335`→`…_205419`, both enforce, via the kb-orchestrator's live capture); `docs/design/shape3_workspace_state_relocation_plan.md` (workspace `.env` reading stays daemon-side — **decided/shipped**); `docs/design/plugin-apparmor-contribution.md` (hook v20 shipped, full migration staged); `docs/design/phase5_5_10_apparmor_child_subprofile_audit.md` (`//child` escape closure — shipped per template v14–v15).
