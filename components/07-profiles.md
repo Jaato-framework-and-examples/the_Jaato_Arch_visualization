@@ -24,7 +24,7 @@ Below the profile there is nothing else to configure — it is the bottom, hand-
 - Choose a context garbage-collection strategy (`gc`).
 - Inject session-scoped environment variables with `${VAR}` expansion and secret-URI resolution (`env`).
 - Compose from other profiles (`inherits`) and constrain output (`completion_payload_schema`, `spawn_payload_schema`).
-- Optionally cap resources (`runtime_limits`) and opt into sandboxing (`apparmor`, `apparmor_fragments`).
+- Optionally cap resources (`runtime_limits` — kernel caps via cgroup v2 + app-layer caps; see [The Workspace](15-workspace.md)) and opt into sandboxing (`apparmor`, `apparmor_fragments`).
 
 ## Key concepts & structure
 
