@@ -91,6 +91,35 @@ The **`JaatoRuntime`** constructs and owns the single `PluginRegistry`; **`Jaato
 
 A user sends `"Implement a circuit breaker using MODULE.md"`. `JaatoSession` calls `registry.enrich_prompt()`: the **references** plugin (priority 20) injects MODULE.md's content; **template** (40) spots `{{var}}` blocks in that injected text and extracts them to `.jaato/templates/`, annotating the prompt; **multimodal** (60) finds no images; **memory** (80) appends a hint about a related prior decision. The fully enriched prompt plus the core tool schemas (cli, file_edit, …) goes to the model. The model calls `updateFile`; because that tool's schema carries `TRAIT_FILE_WRITER`, the session routes the result through LSP-diagnostic and artifact-tracking enrichment before returning it. (`architecture.md:892-905`, CLAUDE.md "Tool Traits".)
 
+## Diagram
+
+```mermaid
+flowchart TD
+    tools["Tool Plugins (cli, mcp, file_edit, todo, references, lsp...)"]
+    enrich["Enrichment Plugins"]
+    registry["PluginRegistry (_exposed, _enrichment_only)"]
+    outputs["tool schemas, executors, system instructions, traits"]
+    bypass["GC / Session / Model Provider Plugins (bypass registry)"]
+
+    chain["references (20) -- template (40) -- multimodal (60) -- memory (80) -- session (90)"]
+    session["JaatoRuntime / JaatoSession"]
+    llm["Model Provider -- LLM"]
+
+    tools -->|"discover / expose"| registry
+    enrich -->|"discover / expose"| registry
+    registry -->|"aggregate"| outputs
+    registry -->|"enrich_prompt() in priority order"| chain
+    chain -->|"enriched prompt"| session
+    outputs -->|"schemas + executors"| session
+    session <-->|"set_session() auto-wire"| registry
+    registry -.->|"set_workspace_path"| tools
+    bypass -.->|"set_gc_plugin / load_provider"| session
+    session -->|"send_message"| llm
+
+    style registry fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+    style chain fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** A central hub-and-spoke for the registry, stacked on top of a left-to-right enrichment flow band; model providers shown as a layer beneath. Read top-to-bottom: capabilities → registry → enrichment → runtime/session → provider → LLM.

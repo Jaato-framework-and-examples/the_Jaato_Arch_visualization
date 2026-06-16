@@ -115,6 +115,31 @@ apparmor_fragments: [host_validator]
 
 A `codegen` cascade stage spawns on workspace `/srv/work/sessions/20260615_codegen`. The daemon renders `jaato-ws-20260615_codegen`: base rules grant `/srv/work/sessions/20260615_codegen/** rwkl`; `file_edit` + `memory` contribute `@{HOME}/.jaato/sessions/** rw` and `@{HOME}/.jaato/memories/** rw`; the profile's `apparmor_fragments: [host_validator]` inlines `/usr/bin/java ix, /usr/bin/mvn ix`. The runner self-confines to this profile. When the agent runs `mvn package`, the cli plugin forks and the child transitions into `//child` — which grants only the fragment-declared `java`/`mvn` (no broad `/usr/bin/** ix`), so an improvised `curl` is kernel-denied. A sibling session at `…/20260615_review` is denied by default — its path was never in this profile's allow list.
 
+## Diagram
+
+```mermaid
+flowchart LR
+    Base["Base / workspace rules (PROFILE_TEMPLATE)"]
+    Plugins["Per-plugin default fragments (get_apparmor_rules)"]
+    Cascade["Cascade / profile custom fragments (apparmor_fragments)"]
+    WS["Workspace /…/sessions/{session_id}/"]
+    Profile["Composed profile jaato-ws-{session_id} (base + tool_hat + child)"]
+    Runner["Runner process (reused warm pool slot)"]
+    Other["Other session's workspace"]
+
+    Base -->|"base body"| Profile
+    Plugins -->|"splice plugin_contributed_rules"| Profile
+    Cascade -->|"inline extension_fragments_inline"| Profile
+    WS -->|"workspace_path substitution"| Profile
+    Profile -->|"self-confine: aa_change_profile (step 1c)"| Runner
+    WS -->|"cwd + set_workspace_path broadcast"| Runner
+    Runner -.->|"reuse: same pid, re-confine S(N) to S(N+1)"| Runner
+    Runner -.->|"default-deny (no access)"| Other
+
+    style WS fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+    style Profile fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** hub-and-spoke. A central rounded box labeled **"Workspace `/…/sessions/{session_id}/`"** sits in the middle. Three contributor boxes feed a composition node; the composed profile wraps a runner.

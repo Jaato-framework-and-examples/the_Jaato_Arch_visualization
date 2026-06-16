@@ -75,6 +75,50 @@ A cascade is a chain of stages (e.g. `discovery` → `codegen` → `review`), ea
 
 So the temporal rule is: **persist on `AgentCompletedEvent`, spawn on `SlotSettledEvent`.** `SessionTerminatedEvent` fires *earlier still* (before the slot returns), so spawning on it also races the slot and cold-spawns (`events.py:471-477`). The right event is the one whose position in the timeline guarantees the warm slot is free. This is the deliverable's centerpiece. *(All shipped; `was_warm`/`pool_slot_pid` are observability fields — the spawn happens either way, the flag only says whether it'll be fast.)*
 
+## Diagram
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant D as Daemon
+    participant R as Runner
+    participant X as Reactor
+
+    Note over C,X: Connect
+    C->>D: connect
+    D->>C: ConnectedEvent
+    D->>C: SessionInfoEvent snapshot
+    R->>C: AgentCreatedEvent main
+
+    Note over C,X: Turn
+    C->>D: SendMessageRequest
+    D->>C: AgentStatusChangedEvent active
+    R->>C: AgentOutputEvent write/append/flush
+
+    Note over C,X: Tool-call
+    loop x N tools
+        R->>C: ToolCallStartEvent
+        R->>C: PermissionRequestedEvent
+        C->>D: PermissionResponseRequest
+        D->>C: ToolCallEndEvent
+    end
+    R->>C: TurnCompletedEvent
+
+    Note over C,X: Completion
+    R->>C: AgentStatusChangedEvent done/idle
+    R->>X: AgentCompletedEvent
+    Note over X: reactor PERSISTS next-stage spec, does NOT spawn yet
+    D->>C: SessionTerminatedEvent natural
+
+    Note over C,X: Slot-return
+    D->>X: SlotSettledEvent was_warm=true
+    Note over X: reactor SPAWNS next stage, lands in WARM slot
+    X->>D: create_session cascade_driver_id
+
+    Note over C,X: Teardown
+    Note over D: JaatoServer.shutdown complete, transport closes
+```
+
 ## Diagram brief (for illustration)
 
 **Layout:** A horizontal, time-ordered **swimlane sequence diagram**. Time flows strictly **left → right**. Four horizontal lanes, top to bottom: **Client**, **Daemon / SessionManager**, **Runner / Session**, **Reactor**. Across the very top, draw six labeled **phase bands** (vertical regions) spanning all lanes: `Connect · Turn · Tool-call · Completion · Slot-return · Teardown`.

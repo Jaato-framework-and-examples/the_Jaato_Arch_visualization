@@ -62,7 +62,7 @@ Behavior of this core is tuned by environment variables (read in `jaato_runtime.
 - `JAATO_PARALLEL_TOOLS` (default `true`) — enable thread-pool parallel tool execution (`jaato_runtime.py:178`).
 - `JAATO_DEFERRED_TOOLS` (default `true`) — load only `core` tools into the initial context; others are discovered on demand (`jaato_runtime.py:185`).
 
-Sessions are typically created from an agent **profile** (`SubagentProfile`) that supplies `model`, `provider`, `plugins`, `system_instructions`, and a `gc` strategy; these map onto `create_session(...)` arguments.
+Sessions are typically created from an agent **profile** (`SubagentProfile`) that supplies `model`, `provider`, `plugins`, and a `gc` strategy — the agent's instructions come from its `.jaato/agents/*.md` persona (over the `.jaato/instructions/` base), not the profile; these map onto `create_session(...)` arguments (whose runtime `system_instructions=` param carries the rendered persona text).
 
 ## Relationship to neighboring components
 
@@ -92,6 +92,38 @@ researcher = runtime.create_session(
 ```
 
 `main.send_message(...)` enters `_run_chat_loop`: model → function calls → `ToolExecutor.execute` (up to 8 in parallel) → results → model, until plain text. The shared `TokenLedger` aggregates every call's usage; the shared `PermissionPlugin` gates every tool.
+
+## Diagram
+
+```mermaid
+flowchart LR
+    ipc["SDK remote client (IPCClient / IPCRecoveryClient)"]
+
+    subgraph Runner["Runner subprocess"]
+        runtime["JaatoRuntime (shared): ProviderConfig, PluginRegistry, PermissionPlugin, TokenLedger"]
+        client["JaatoClient (in-process facade)"]
+        main["JaatoSession (main agent)"]
+        sub["JaatoSession (subagent: researcher)"]
+        model["Model"]
+        calls["function_calls"]
+        exec["ToolExecutor.execute (thread pool, max 8)"]
+        results["results"]
+
+        client -->|"wraps"| main
+        runtime -->|"create_session()"| main
+        runtime -->|"create_session() (cheap, shares runtime)"| sub
+        main -->|"_run_chat_loop"| model
+        model --> calls
+        calls --> exec
+        exec -->|"permission check"| runtime
+        exec --> results
+        results -->|"loop until plain text"| model
+    end
+
+    ipc -.->|"drives same core remotely"| runtime
+
+    style runtime fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
 
 ## Diagram brief (for illustration)
 

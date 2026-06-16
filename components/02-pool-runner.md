@@ -91,6 +91,38 @@ The **Daemon** below owns the `TemplateManager`/`PoolManager` instances and sets
 
 **Fan-out cascade (where pool size actually matters).** A stage that spawns, say, 4 sub-stages **in parallel** needs 4 warm slots *at once*. With `JAATO_RUNNER_POOL_SIZE=4` all four start warm; with the default 2, two of them get `acquire_slot → None` (`pool_acquire_miss_total++`) and cold-spawn (~30s). So size the pool to the cascade's **peak stage concurrency**, not its step count.
 
+## Diagram
+
+```mermaid
+flowchart TD
+    session["Session N / Runner (claimed slot, self-confines)"]
+
+    subgraph Pool["Pre-warm pool"]
+        template["Template subprocess (warm runner-tier imports)"]
+        slot1["Pool slot (idle)"]
+        slot2["Pool slot (idle)"]
+        slot3["Pool slot (idle)"]
+    end
+
+    subgraph DaemonBar["Daemon (server/__main__.py, PR_SET_CHILD_SUBREAPER)"]
+        tmgr["TemplateManager"]
+        pmgr["PoolManager (replenish + telemetry)"]
+    end
+
+    tmgr -->|"spawn + wait READY"| template
+    template -.->|"READY"| tmgr
+    pmgr -->|"FORK_SLOT (SCM_RIGHTS)"| template
+    template ==>|"os.fork() &mdash; no exec"| slot1
+    template ==>|"os.fork() &mdash; no exec"| slot2
+    template ==>|"os.fork() &mdash; no exec"| slot3
+    pmgr -->|"replenish to target_size"| Pool
+    pmgr -->|"acquire_slot()"| slot1
+    slot1 -->|"session.bootstrap via RPC"| session
+    template -.->|"death triggers respawn"| pmgr
+
+    style template fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** layered/hub diagram. A horizontal **Daemon** bar across the bottom. Above-left, a single **Template subprocess** box. To its right, a row of N **Pool slot** boxes. Above the slots, a **Session / Runner** box on the right.

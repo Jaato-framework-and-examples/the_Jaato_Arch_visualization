@@ -99,6 +99,37 @@ def execute(params, event, ctx):
 
 The premium **drift_monitor** reactor (`jaato-premium/jaato_premium/drift_monitor/reactor_logic.py`) ships via the `jaato.premium_reactors` entry point and matches `plan.step_updated`, `agent.output`, and `turn.completed`. `agent.output` chunks accumulate the model's reasoning text per session; `plan.step_updated` is the primary scoring trigger (it scores the buffer against the *outgoing* step before applying the transition); `turn.completed` is the fallback for multi-turn steps (`reactor_logic.py:105-181`). When a step's accumulated text scores low against its goal, `_flush_and_score` emits a `drift.measured` event via `ctx.emit_event` and, if flagged, calls `ctx.inject_prompt` with a deliberately conversational nudge ("Heads up — your last turn scored low against the active plan step…") so the live agent self-corrects rather than reading it as a refusal (`reactor_logic.py:69-75`, `reactor_logic.py:184-269`). Per-session `DriftState` survives the per-dispatch script reload by living in the importable module, not the deployed script body (`reactor_logic.py:1-37`, `reactor_logic.py:78-94`).
 
+## Diagram
+
+```mermaid
+flowchart LR
+  rules["reactors.json (4-tier merge)"]
+  bus["Session event bus (agent.completed, turn.completed, ...)"]
+  engine["Reactor Engine (daemon extension)"]
+  actx["ActionContext"]
+  fork["Fork / handoff agent"]
+  inject["inject_prompt (steer live persona)"]
+  cascade["create_session to Cascade"]
+  webhook["post_webhook / run_shell"]
+  gate["HandoffGate registry"]
+  sdk["SDK clients (observe events + gates)"]
+
+  rules -->|"load + hot-reload"| engine
+  bus -->|"subscribe (match all)"| engine
+  engine -->|"rule matched, run execute()"| actx
+  actx -->|"fork"| fork
+  actx -->|"inject"| inject
+  actx -->|"spawn cascade"| cascade
+  actx -->|"webhook / shell"| webhook
+  actx <-->|"acquire / announce / release"| gate
+  gate -.->|"broadcast"| sdk
+  fork -->|"new sessions emit events"| bus
+  cascade -->|"new sessions emit events"| bus
+  engine -.->|"skips source_agent=reactor"| engine
+
+  style engine fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** hub-and-spoke with a left-to-right action fan-out. Center-left is the daemon containing the reactor; right side shows the actions it fires. A thin "config" strip feeds in from the top-left.

@@ -96,6 +96,33 @@ def render(context, args):
 
 The supervisor passes the case fields via `agent_params` on the spawn (`README.md:666-677`), and the mirroring `spawn_schemas/kyc_aml.json` lists `tomador_dni` and `tomador_nombre` in `required`. At configure time the framework calls both services and embeds the responses in the prompt; the agent reads them as data already present and produces only the decision.
 
+## Diagram
+
+```mermaid
+flowchart LR
+  caller["Caller / Supervisor"]
+  gate["Spawn schema gate (spawn_payload_schema)"]
+  persona["Persona (.jaato/agents/&lt;name&gt;.md)"]
+  prefetch["Pre-fetch script (render context args)"]
+  ctx["RenderContext (agent_params, registry, runtime)"]
+  svc["External service / KB (service_connector)"]
+  prompt["Assembled System Prompt"]
+  agent["Agent first turn"]
+  comp["Completion schema / artifacts (output boundary)"]
+
+  caller -->|"agent_params"| gate
+  gate -->|"session created"| persona
+  persona -->|"placeholder expand"| prefetch
+  ctx -->|"handles"| prefetch
+  prefetch <-->|"call_service"| svc
+  prefetch -->|"returns string"| prompt
+  prompt -->|"reads as input"| agent
+  gate -.->|"required keys mirror"| prefetch
+  agent -.->|"symmetric boundary"| comp
+
+  style prefetch fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** Left-to-right horizontal flow with a highlighted middle stage. Three lanes top-to-bottom only for the "boundary" labels.

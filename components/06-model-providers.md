@@ -102,6 +102,38 @@ plugin_configs:
 
 A Profile sets `"provider": "anthropic"`, `"model": "claude-sonnet-4-5-20250929"`. At session start the runtime calls `AnthropicProvider().verify_auth()` (checking PKCE/OAuth/API-key without touching `self._client`), then `initialize()` builds the SDK client and `connect(model)` pins it. On a turn the session calls `complete(messages=<full history>, system_instruction=..., tools=[ToolSchema(...)], on_chunk=stream_cb, cancel_token=tok)`. The provider translates the agnostic `Message`/`ToolSchema` list to Anthropic blocks, streams tokens through `stream_cb`, and — if the model emits a `tool_use` — returns a `TurnResult` whose `ProviderResponse.parts` carry a `FunctionCall`. The session runs the tool, appends a `ToolResult` part, and calls `complete()` again. Switching this Profile's `provider` to `"openrouter"` or `"ollama"` changes nothing in the loop.
 
+## Diagram
+
+```mermaid
+flowchart TD
+  session["JaatoSession (turn loop)"]
+  runtime["JaatoRuntime (shared provider config)"]
+  hub["ModelProviderPlugin protocol<br/>complete · connect · count_tokens · serialize_history"]
+  types["Provider-agnostic types<br/>Message · Part · ToolSchema · ProviderResponse · TurnResult"]
+  cloud["Cloud APIs<br/>anthropic · google_genai · zhipuai"]
+  local["Local servers<br/>ollama · vllm · nim"]
+  gateways["Gateways<br/>openrouter · github_models"]
+  cli["Subscription / IDE<br/>claude_cli · antigravity"]
+  vendor["Vendor SDK / HTTP backends"]
+
+  runtime --> session
+  session -->|"complete(messages, tools)"| hub
+  hub -.->|"CancelToken.cancel()"| session
+  hub --- types
+  hub -->|"one protocol"| cloud
+  hub -->|"one protocol"| local
+  hub -->|"one protocol"| gateways
+  hub -->|"one protocol"| cli
+  cloud --> vendor
+  local --> vendor
+  gateways --> vendor
+  cli --> vendor
+  hub -.->|"TurnResult"| session
+
+  style hub fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+  style types fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** hub-and-spoke with a thin layered band on top. Top band = "Agent runtime" (two stacked boxes: `JaatoSession` over `JaatoRuntime`). Center hub = the abstraction. Spokes fan downward to the concrete providers, which themselves point to external vendor logos/labels.

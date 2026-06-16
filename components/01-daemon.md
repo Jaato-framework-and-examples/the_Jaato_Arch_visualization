@@ -85,6 +85,43 @@ The daemon is the host process for the **`SessionManager`** and, per session, a 
 
 A developer runs `jaato-server --ipc-socket /tmp/jaato.sock --daemon`. The daemon double-forks, writes `/tmp/jaato.pid`, claims the subreaper role, spawns the warm runner template and two idle pool slots, and starts listening on the Unix socket. The TUI connects with `python jaato-tui/rich_client.py --connect /tmp/jaato.sock`; the `SessionManager` creates a session, forks a pool slot for its runner, and emits a `SessionInfoEvent` snapshot (current session id/name/model + the list of sessions, tools, and models). The developer chats, then closes the terminal — but the daemon and the session keep running. Hours later they reconnect from a different client, get a fresh `SessionInfoEvent`, and resume mid-conversation. `jaato-server --stop` later SIGTERMs the daemon and reaps any orphaned runners left behind by sessions killed mid-cascade.
 
+## Diagram
+
+```mermaid
+flowchart TD
+    tui["jaato-tui (Terminal UI)"]
+    web["Web / Remote Client"]
+
+    subgraph RunnerTier["Runner subprocess tier (spawned by daemon)"]
+        template["Runner Template (warm imports)"]
+        slot1["Pool Slot"]
+        slot2["Pool Slot"]
+    end
+
+    subgraph Daemon["JaatoDaemon &mdash; jaato-server (persists independently of clients)"]
+        ipc["JaatoIPCServer (Unix socket)"]
+        ws["JaatoWSServer (WebSocket + bearer auth)"]
+        sm["SessionManager"]
+        sessions["Sessions (JaatoServer, persisted)"]
+    end
+
+    os["Operating System"]
+
+    tui <-->|"JSON events"| ipc
+    web <-->|"bearer token"| ws
+    ipc --> sm
+    ws --> sm
+    sm --> sessions
+    sm -->|"event snapshot"| tui
+    template -->|"fork (no exec)"| slot1
+    template -->|"fork (no exec)"| slot2
+    sessions -.->|"claims warm slot"| slot1
+    RunnerTier -.->|"orphans re-parent (subreaper)"| Daemon
+    os --- Daemon
+
+    style Daemon fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** a **bottom-to-top** layered stack (matching the deck's bottom→top ordering). A thin `Operating System` strip at the very bottom; the **Daemon** as a large emphasized container band sitting on it; the **runner subprocess tier the daemon spawns drawn directly *above* the daemon**; and **clients** drawn off to the **left**, attaching over the sockets (they are external consumers, not a stack layer).
