@@ -110,6 +110,36 @@ def validate(payload, context):
 
 `signal_completion` then returns `{"error": "validation_failed", "processor_errors": [...]}` containing `src/Customer.java ... shape validation failed`, and the agent is forced to retry instead of finishing on a false claim (`test_completion_processors.py:722-765`). A render counterpart writes `f'summary: {payload["summary"]}'` to `report.md` and surfaces it as `artifacts_written` (`test_completion_processors.py:670-693`).
 
+## Diagram
+
+```mermaid
+flowchart LR
+  prefetch["Prefetch scripts (input side mirror)"]
+  agent["Agent: calls signal_completion(payload)"]
+  schema["Completion schema (structural gate)"]
+  procs["Completion processors (validate + render)"]
+  ledger["Tool-call ledger (call paired with response)"]
+  fatal{"has_fatal?"}
+  retry["validation_failed: agent retries"]
+  completed["on_agent_completed event"]
+  cascade["Next cascade stage"]
+  artifacts["Output files: artifacts_written"]
+
+  prefetch -.->|"mirror"| agent
+  agent -->|"payload"| schema
+  schema -->|"shape OK"| procs
+  schema -.->|"fails"| agent
+  ledger -->|"context.tool_calls"| procs
+  procs -->|"aggregate results"| fatal
+  procs -->|"render + write"| artifacts
+  fatal -.->|"yes"| retry
+  retry -.-> agent
+  fatal -->|"no"| completed
+  completed -->|"advance"| cascade
+
+  style procs fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** horizontal left-to-right flow with one vertical fan-out in the middle (a sequence/pipeline shape).

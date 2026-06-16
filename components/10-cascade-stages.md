@@ -95,6 +95,31 @@ A stage *is* a headless **session** running a **persona** under a **profile**. I
 
 The `build_descriptor` stage in kb-enablement-2.0. After the final codegen step, `cascade_after_codegen.compute_next_spawn` returns `next_step == -1`, so the handler persists a `build_descriptor` spawn spec; the `slot.settled` reactor claims it and spawns the session into the warm slot. Its prefetch body-wires `collected_kb_deps.json` (15 baseline deps merged across the run) + the rendered Java imports. The agent echoes the baseline, finds one unmatched import (`io.github.resilience4j.circuitbreaker.*`), calls `call_service(service=maven_central, …)` to resolve `io.github.resilience4j:resilience4j-circuitbreaker:2.3.0`, and calls `signal_completion` with the combined `dependencies[]` + `project_coordinate.groupId`. `build_descriptor_versions_real.py` passes (no placeholder versions), `build_descriptor_render.py` writes `pom.xml`, `build_descriptor_persist.py` writes `build_descriptor_result.json`. The `AgentCompletedEvent` winds the session down; on its `SlotSettledEvent` the `slot.settled` reactor runs `mvn` and spawns `build_judge`. `build_descriptor` never referenced `build_judge`; it only emitted "done."
 
+## Diagram
+
+```mermaid
+flowchart LR
+  artifacts["Prior artifacts (cascade_state/ + collected_kb_deps)"]
+  spawnReactor["slot.settled reactor: claim spec + create_session"]
+  stage["Cascade Stage = build_descriptor (one headless session)"]
+  input["Input: initial_prompt + body-wired prefetch"]
+  exec["Execution: echo baseline, call_service(maven_central)"]
+  output["Output: signal_completion (schema-validated, render pom.xml)"]
+  nextReactor["slot.settled reactor (build_descriptor): run mvn, spawn next"]
+  judge["build_judge (can branch BACK)"]
+
+  artifacts -->|"body-wire"| input
+  spawnReactor -->|"create_session (warm slot)"| stage
+  stage --> input
+  input --> exec
+  exec --> output
+  output -->|"AgentCompletedEvent"| nextReactor
+  nextReactor -->|"mvn build, spawn"| judge
+  judge -.->|"build_status==fail re-run steps"| spawnReactor
+
+  style stage fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** a single large central box (the stage) with a clear left input port, a body, and a right output port; a "spawn" arrow entering from the upper-left out of a `slot.settled` reactor box, a "trigger next" arrow leaving from the lower-right into another `slot.settled` reactor box.

@@ -98,6 +98,39 @@ A cascade composes the rest of jaato: each **stage** is a headless **session** r
 
 A kb-enablement-2.0 run that converges in two iterations. The driver spawns `discovery`; `context` derives `generation_context.json` + an 8-step `execution_plan.json`; `host_validator` confirms `java`/`mvn`. Codegen/transform then run as 8 per-step sessions (each `agent.completed` → persist `step_<N>_result.json` → persist next spawn → `slot.settled` spawns the next step into the warm slot). After the last step, `cascade_after_codegen` sees `next_step == -1` and spawns `build_descriptor` (the **fan-in**), which combines `collected_kb_deps.json` with registry lookups and renders `pom.xml`. On `slot.settled` the daemon runs `mvn` → `build_result.json` and spawns `build_judge`, which finds 51 compile errors clustering into 3 root patterns, writes 3 raw memories, and signals `build_status: fail`. `memory_curator` curates the raws and `compute_next_worklist` resolves the 3 affected module_ids (+1 dependent transform) → `steps_to_run`. The driver reads `cascade_complete.json`, sees a non-empty `next_worklist`, and runs **iteration 2** — `context` filters the plan to just those modules, the loop re-runs only them, `mvn` now passes, `build_judge` reports `build_status: pass`, `compute_next_worklist` returns `convergence: "converged"`, and the driver exits. The driver only ever spawned `discovery` (twice); reactors spawned everything else.
 
+## Diagram
+
+```mermaid
+flowchart LR
+  driver["Driver (_cascade:{cid}) observer"]
+  discovery["discovery"]
+  context["context"]
+  host["host_validator"]
+  codegen["codegen / transform (N per-step sessions)"]
+  build_desc["build_descriptor (FAN-IN: runs once)"]
+  mvn["build (mvn) daemon-side"]
+  judge["build_judge"]
+  curator["memory_curator (TERMINAL)"]
+  done["DONE (converged)"]
+  memstore["Cross-cascade memory store"]
+
+  driver -->|"kickoff only"| discovery
+  discovery -->|"slot.settled spawn"| context
+  context -->|"slot.settled spawn"| host
+  host -->|"slot.settled spawn"| codegen
+  codegen -->|"next plan step"| codegen
+  codegen -->|"next_step == -1 fan-in"| build_desc
+  build_desc -->|"slot.settled spawn"| mvn
+  mvn --> judge
+  judge -->|"slot.settled spawn"| curator
+  curator -->|"build_status==pass"| done
+  curator -.->|"build_status==fail next_worklist"| context
+  judge -->|"store / curate"| memstore
+  memstore -.->|"enrich future cascades"| build_desc
+
+  style codegen fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** left-to-right pipeline along the bottom, with an elevated "driver/observer" lane across the top, and a curved **branch-back loop** arc returning from the right end to the codegen/transform region. Event arrows go *up* to the driver lane; spawn arrows arc *forward*; the loop arc is the visual centerpiece.

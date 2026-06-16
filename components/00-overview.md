@@ -92,6 +92,47 @@ teardown); it is what reactors and cascade drivers observe, and it is why a casc
   (Production-confirmed by the kb-orchestrator's cascade driver, which subscribes via
   `client.cascade_events(cid)` with `cid == cascade_driver_id` and tears down with `cascade.cancel(cid)`.)
 
+## Diagram
+
+```mermaid
+flowchart TD
+    clients["Clients (TUI / Web / SDK)"]
+
+    subgraph Orchestration["Orchestration tier"]
+        reactors["Reactors"]
+        cascades["Cascades (reactor-driven)"]
+        stages["Cascade Stages"]
+    end
+
+    subgraph Authoring["Authoring tier"]
+        personas["Personas"]
+        profiles["Profiles"]
+    end
+
+    subgraph Runtime["Runtime tier"]
+        runtime["Runtime / Session / Client (agent loop)"]
+        runner["Runner (per session, isolated)"]
+        pool["Pre-warm Runner Pool"]
+        daemon["Daemon"]
+    end
+
+    daemon --> pool
+    pool --> runner
+    runner --> runtime
+    runtime --> profiles
+    profiles --> personas
+    personas --> stages
+    stages --> cascades
+    cascades --> reactors
+
+    clients <-->|"IPC / WebSocket"| daemon
+    reactors -.->|"triggers"| cascades
+    reactors -.->|"steers"| personas
+    stages -->|"payload chain"| stages
+
+    style daemon fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** a single vertical **layered stack**, bottom→top, that doubles as the deck's title /

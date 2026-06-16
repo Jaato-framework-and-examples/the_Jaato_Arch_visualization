@@ -77,6 +77,34 @@ The **pool** below provides warm slots forked from a template, turning the per-s
 
 A Java cascade runs `discovery → context → codegen` as one logical unit. The client supplies `cascade_driver_id=C` on every `session.new`. The first session claims an idle pool slot, the slot self-confines to `jaato-ws-S1`, initializes the `lsp` plugin which spawns one `jdtls` (a 30-60s cost), and serves the stage. At session end the slot returns to `IDLE_FOR_CASCADE(C)` and `lsp.reset_for_next_session()` is a no-op so `_connected_servers` survives. The next stage re-claims the *same* slot, transitions `aa_change_profile(jaato-ws-S2)` (permitted by the template rule `change_profile -> jaato-ws-*,`), and reuses the warm jdtls — so the 30-60s tax is paid once per cascade, not once per stage, and enrichment markdown surfaces on later stages because the LSP connection is shared (`runner-cascade-sharing.md:14-41, 188-222, 549-565`).
 
+## Diagram
+
+```mermaid
+flowchart TD
+    daemon["jaato daemon (unconfined): SessionManager, RunnerSpawner, RunnerRPCClient"]
+    template["Pool Template (warm imports)"]
+    slot1["warm slot"]
+    slot2["warm slot"]
+    runner["Runner subprocess (python -m server.runner)"]
+    badge["AppArmor: jaato-ws-{session_id}"]
+    inner["JaatoRuntime, JaatoSession, runner-tier plugins, ToolExecutor / RunnerRPC"]
+    children["tool subprocesses (cli, jdtls, PTY)"]
+
+    template -.->|"fork"| slot1
+    template -.->|"fork"| slot2
+    slot1 -->|"becomes the runner"| runner
+    daemon -->|"fork+exec / claim slot"| runner
+    daemon <-->|"socketpair, JSON (fd 3)"| runner
+    daemon -->|"session.bootstrap"| runner
+    runner -->|"prompt_operator / fragment"| daemon
+    runner --> badge
+    runner --> inner
+    runner -.->|"spawn (inherit profile)"| children
+
+    style runner fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+    style badge fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** Two stacked process boxes connected by a single vertical pipe, with a small "pool" cluster feeding the lower box from the left. Hub-and-spoke detail inside the lower box.

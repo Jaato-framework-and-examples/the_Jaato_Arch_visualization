@@ -104,6 +104,33 @@ The **spawn schema** (`spawn_payload_schema`, `spawn_schema_loader.py`) is the s
 
 A cascade stage `auto_underwriter` declares `completion_payload_schema: "completion_schemas/underwriting.json"` requiring `decision` and `risk_band`. The model finishes and calls `signal_completion(decision="approve", risk_band="B", warnings=["postal code defaulted"])`. The server runs `jsonschema.validate` — it passes (the `warnings[]` escape hatch is declared, so the advisory note isn't rejected). The validated payload flows to `on_agent_completed`, completion processors render the underwriting artifact, and the cascade advances to the pricing stage, which itself was spawned with a *spawn* schema mirroring the keys the underwriter produced. Had `decision` been omitted, validation would have returned `validation_failed` and the underwriter would retry rather than poison the downstream stage.
 
+## Diagram
+
+```mermaid
+flowchart LR
+  caller["Caller"]
+  ingate["spawn_payload_schema (input boundary)"]
+  agent["Agent session (persona + tools)"]
+  signal["signal_completion(...)"]
+  outgate["completion_payload_schema (output boundary)"]
+  validate["jsonschema.validate"]
+  procs["Completion processors"]
+  cascade["Cascade next stage"]
+  schemafile[".jaato/completion_schemas/&lt;name&gt;.json"]
+
+  caller -->|"agent_params"| ingate
+  ingate -->|"validated input"| agent
+  agent -->|"final payload"| signal
+  signal --> outgate
+  outgate --> validate
+  validate -->|"valid payload"| procs
+  procs --> cascade
+  validate -.->|"validation_failed retry"| agent
+  schemafile -.->|"resolved by loader"| outgate
+
+  style outgate fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+```
+
 ## Diagram brief (for illustration)
 
 - **Layout:** horizontal "sandwich" flow, left-to-right, with a validation gate emphasized on the right.
