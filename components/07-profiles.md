@@ -43,9 +43,21 @@ A dict of plugin-name → config dict, passed to each plugin's `initialize(confi
 ### `gc` — context garbage collection (`GCProfileConfig`, `config.py:736`)
 Controls how the context window is kept from overflowing. Keys: `type` (`truncate` | `summarize` | `hybrid` | `budget`), `threshold_percent` (default 80) to trigger, `target_percent` (default 60) after GC, `pressure_percent` (`0`/`null` = continuous mode), `preserve_recent_turns`, `notify_on_gc`, `summarize_middle_turns`, `max_turns`.
 
+### `quirks` — per-provider/model behavior knobs (`config.py:1053`)
+A top-level dict that opts the **active provider** into known wire-format / model-behavior **workarounds**. Because a profile binds to exactly one `provider` + `model`, quirks are where you encode "*this* model on *this* provider misbehaves in way X — apply the framework's fix." The dict is threaded to the provider as `provider.extra["quirks"]` at session bootstrap; a provider that supports quirks reads the keys it implements, sets a per-quirk flag, and framework code consults those flags via `getattr(provider, "_<quirk>", False)`. **Today only the vLLM provider has a quirks reader at all** — it logs and ignores unknown keys (so a profile typo surfaces rather than silently mis-configuring) and rejects a non-dict `quirks` with a warning (`provider.py:346-380`). Other providers carry **no quirk-handling code**, so the dict simply sits unconsumed — inert — there.
+
+This is the "specific management" part: a quirk only does something if the bound provider has a reader for it. Every shipped quirk lives in the **vLLM provider** — workarounds for small / local open models served via vLLM:
+
+- **`coerce_typed_tool_args`** — when the model emits a JSON *string* where the tool schema expects an array/object/number/boolean, coerce it (`ast.literal_eval` → `json.loads`) and re-validate. For Llama 3.1 on vLLM's `llama3_json` parser, which stringifies typed args under `tool_choice: auto`.
+- **`force_tool_choice_for_lifecycle`** — after a lifecycle-tool `validation_failed`, forward a named-function `tool_choice` so vLLM engages xgrammar and constrains the retry's args to the tool's JSON schema (correctly-typed args at the source, not post-hoc coercion).
+- **`force_narration_between_tools`** — inject a synthetic user prompt after each `tool_result` asking the model to narrate its observation in 1–2 sentences; closes the small-model narration-skipping class (qwen3-14b @ temp=0 skips narration regardless of persona prose).
+- **`auto_finalize_on_complete`** — auto-synthesize `signal_completion()` server-side the instant the composite `is_complete` flips True; closes the context-overflow-at-finalize death for accumulator-style completion (see [completion schemas](13-completion-schemas.md)).
+
+Quirks are **additive**: they default to empty (none active), and a profile turns one on with `quirks: { force_narration_between_tools: true }`. Inheritance is a dict-union with **child-wins-on-collision**, so a child disables a parent's quirk explicitly with `<key>: false` (`config.py:1693-1725`).
+
 ### Inheritance & resolution (`config.py:1360` `resolve_profiles`, `config.py:1444` `_merge_profiles`)
 Profiles compose via `inherits` (a string or list of parent names). Resolution runs after discovery as a topological flatten with cycle detection; afterward `inherits` is cleared. Merge rules:
-- **Collections (union):** `plugins`, `preloaded_plugins`, `env`, `plugin_configs` (deep-merged per plugin/key).
+- **Collections (union):** `plugins`, `preloaded_plugins`, `env`, `plugin_configs` (deep-merged per plugin/key), `completion_processors` (concatenated), and `quirks` (dict-union, **child-wins**; disable a parent's with `<key>: false`).
 - **Scalars (agreement-or-override):** `model`, `provider`, `gc`, `runtime_limits`, `completion_payload_schema`, `spawn_payload_schema` — parents must agree or the child must override; otherwise it is a hard error.
 - **`max_turns`:** most restrictive (minimum) across parents unless the child overrides.
 - **Concatenation:** `system_instructions` (parents → child, joined by blank lines).
@@ -160,7 +172,8 @@ Here `template(preload)` forces the templating tools into the initial context, `
 - `…/config.py:290-418` — `parse_plugin_entry` / `parse_plugin_list`: `plugins` modifier syntax (`mode:preload`/`discover`, `tools:[...]` allow-lists).
 - `…/config.py:736` — `GCProfileConfig`: GC type/threshold/target/pressure/preserve fields.
 - `…/config.py:889` and `…/config.py:1927-1940` — `system_instructions` deprecated in favor of `.jaato/agents/*.md`.
-- `…/config.py:1360` `resolve_profiles` & `…/config.py:1444` `_merge_profiles` — inheritance: union collections, agreement-or-override scalars, concatenated instructions, min `max_turns`.
+- `…/config.py:1360` `resolve_profiles` & `…/config.py:1444` `_merge_profiles` — inheritance: union collections, agreement-or-override scalars, concatenated instructions, min `max_turns`; `…/config.py:1693-1725` — `quirks` dict-union, child-wins.
+- `…/config.py:1027-1053` — the `quirks` field: per-provider/model workaround dict; provider reads keys it knows, unknown keys warned+ignored. `jaato-server/shared/plugins/model_provider/vllm/provider.py:164-231, 346-380` — the four shipped quirks (`coerce_typed_tool_args`, `force_tool_choice_for_lifecycle`, `force_narration_between_tools`, `auto_finalize_on_complete`) and the `provider.extra["quirks"]` read + unknown-key warning.
 - `…/config.py:1953` `discover_profiles` & `…/config.py:1866-1877` — 3-tier discovery precedence; `plugins` required (absent rejected, `[]` = minimal framework set).
 - `jaato/CLAUDE.md` "Agent Profiles" + "Anthropic Claude"/"OpenRouter" knobs — profile schema example, `session.new --profile` flow, `plugin_configs` provider layering (`api_params`, `routing`).
 - `jaato/docs/jaato_subagent_profiles_reference.md:52-54, 1037-1049` — profile vs. agent (instructions) distinction; model/provider resolution chain (profile → config default → parent).

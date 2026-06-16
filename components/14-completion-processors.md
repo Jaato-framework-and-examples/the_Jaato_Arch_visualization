@@ -61,18 +61,32 @@ Outcome of a run, with three (well, four) buckets: `written` (file paths; `""` s
 
 ## Configuration / authoring
 
-A profile (`SubagentProfile` / `.jaato/profiles/*.yaml`) declares a `completion_processors` list, parsed by `_parse_completion_processors` (`config.py:979`, `1160-1244`). Each entry:
+A profile (`SubagentProfile` / `.jaato/profiles/*.yaml`) declares a `completion_processors` **list**, parsed by `_parse_completion_processors` (`config.py:979`, `1160-1244`). A single profile composes **several processors with different roles** in that one list — they all run per completion and their outcomes aggregate (never short-circuit; `completion_processors.py:404-406`).
+
+Each entry needs only `script`; every other field defaults (`CompletionProcessor`, `config.py:865-869`):
+
+| field | required? | default | what it controls |
+|---|---|---|---|
+| `script` | **yes** | — | the kb Python module — *its exposed `render`/`validate` symbols ARE the entry's role* |
+| `output` | no | `None` | render target path (`{field}` templated); `None` → side-effect / validation-only |
+| `on_error` | no | `fail_completion` | how hard a failure blocks: `fail_completion` (return `validation_failed` → model retries) vs `warn` (log, let completion proceed) |
+| `phase` | no | `finalization` | *when* it runs: `finalization` (at `signal_completion`) vs `completeness` (during `prepare_completion`) |
+| `description` | no | `None` | human note; runtime-ignored |
+
+The **role** is the surface the module exposes — a **validator** (`validate` → gate/audit) or a **renderer** (`render` → produce/persist), or both. `phase` and `on_error` are *orthogonal modifiers*, not roles: the same validator runs as a soft completeness gate or a hard finalization block depending only on `phase`/`on_error`. Invalid `on_error` or `phase` values don't error — they fall back to the default with a logged warning (`config.py:1229-1237`); a module exposing **neither** `render` nor `validate` is a hard kb-authoring error surfaced at completion time (`completion_processors.py:262-270`).
 
 ```yaml
 completion_processors:
-  - script: scripts/processors/codegen_files_exist.py
-    on_error: fail_completion
-  - script: scripts/processors/render_audit.py
-    output: "out/{case_id}/audit.log"
+  - script: scripts/processors/discovery_coverage.py   # validator, completeness phase
+    phase: completeness                                 #   → still_needed[] soft-gate during accumulation
+  - script: scripts/processors/codegen_files_exist.py  # validator, finalization phase (all defaults)
+    on_error: fail_completion                           #   → hard-blocks signal_completion on a false claim
+  - script: scripts/processors/render_audit.py         # renderer
+    output: "out/{case_id}/audit.log"                   #   → persists an artifact (atomic .tmp + rename)
     description: Persist an audit record per case
 ```
 
-`output` is optional (omit → side-effect/validation-only). `on_error` must be `fail_completion` or `warn` (invalid → defaults to `fail_completion` with a warning). `phase` must be `finalization` or `completeness`. The script file lives under `.jaato/scripts/processors/` and is plain kb Python — yes, processors *are* custom user scripts (`config.py:1186-1244`). Across a parent→child profile cascade, processor lists concatenate (`config.py:1613-1622`).
+Two validators (one completeness-phase soft gate, one finalization-phase hard gate) **plus** one renderer, in a single profile — distinct roles composed in one list. The script files live under `.jaato/scripts/processors/` and are plain kb Python — yes, processors *are* custom user scripts (`config.py:1186-1244`). Across a parent→child profile cascade, processor lists **concatenate**, so a child inherits the parent's processors and appends its own (`config.py:1613-1622`).
 
 ## Relationship to neighboring components
 

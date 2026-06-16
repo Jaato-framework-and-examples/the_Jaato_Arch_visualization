@@ -13,7 +13,7 @@ Declaring the schema does two things. First, it makes the `signal_completion` to
 
 ## Where it sits in the stack
 
-Below it is the **profile / persona** layer that declares the field and the `JaatoSession` that resolves it. Above it sit the consumers of the validated result: **completion processors** (kb-authored Python that renders artifacts and/or further validates the payload, run only after schema validation passes — `lifecycle_tools.py:739-758`) and **cascade stages**, which gate transitions on a stage producing a valid payload. Sideways it is symmetric with the **spawn schema** (`spawn_payload_schema`, resolved by `spawn_schema_loader.py`): the spawn schema types what an agent *consumes* via `agent_params`; the completion schema types what it *produces* via `signal_completion`.
+Below it is the **profile / persona** layer that declares the field and the `JaatoSession` that resolves it. Above it sit the consumers of the validated result: **completion processors** and **cascade stages**, which gate transitions on a stage producing a valid payload. A completion processor (kb-authored Python, run only after schema validation passes — `lifecycle_tools.py:739-758`) offers **two distinct author surfaces** — a `render` surface that *produces/persists* an artifact and a `validate` surface that *gates/audits* the payload — and a module may expose one or both (see [completion processors](14-completion-processors.md)). Sideways it is symmetric with the **spawn schema** (`spawn_payload_schema`, resolved by `spawn_schema_loader.py`): the spawn schema types what an agent *consumes* via `agent_params`; the completion schema types what it *produces* via `signal_completion`.
 
 ## Responsibilities
 
@@ -32,7 +32,30 @@ Documented at `config.py:908-917`: an inline dict or a path under the `.jaato/co
 Returns the parsed schema dict, or `None` on any failure (missing file, invalid JSON, non-object root). Failures are logged at WARNING and the caller falls back to the untyped `summary` path (`completion_schema_loader.py:29-101`).
 
 ### Enforcement — `signal_completion` and `_execute_signal_completion`
-On each call the incoming `args` dict **is** the payload; it is validated with `jsonschema.validate(instance=payload, schema=self._payload_schema)` (`lifecycle_tools.py:713-715`). On `ValidationError` the tool returns `{"error": "validation_failed", ..., "validation_error": ..., "schema_path": ...}` to the model — no event is emitted — so the model can self-correct next turn (`lifecycle_tools.py:716-731`). On success it forwards the validated payload to `hooks.on_agent_completed(payload=...)` and terminates the turn.
+On each call the incoming `args` dict **is** the payload; it is validated with `jsonschema.validate(instance=payload, schema=self._payload_schema)` (`lifecycle_tools.py:713-715`). On `ValidationError` the tool returns `{"error": "validation_failed", ..., "validation_error": ..., "schema_path": ...}` to the model — no event is emitted — so the model can self-correct next turn (`lifecycle_tools.py:716-731`). On success it forwards the validated payload to `hooks.on_agent_completed(payload=...)` and terminates the turn. A session-level idempotency guard makes a second `signal_completion` a no-op, so a manual call cannot double-fire the cascade if the framework already auto-synthesized one (`lifecycle_tools.py:650-666`).
+
+### The accumulator triple — `prepare_completion`, `query_completion`, arg-less `signal_completion`
+**Two paths to the same completion.** A capable, large-context model can hold every value it has discovered in working memory and emit the entire structured payload in **one** `signal_completion(<full payload>)` call — *compose-then-signal*. That is the default and the right path whenever the model can reliably produce a large nested object in a single tool emission.
+
+The **accumulate-then-signal** path — `prepare_completion` one field at a time, `query_completion` to inspect, arg-less `signal_completion()` to finish — exists for when one-shot emission **isn't viable**, which happens for two *independent* reasons:
+
+1. **Composition collapse — a model-capability axis.** Small models can't assemble a whole nested object in one tool call: at temp=0, qwen3-14b collapses to `args={}` when forced to emit the entire completion at once, even though it can produce each piece individually (`lifecycle_tools.py:242-257`). Building one field per call sidesteps the collapse.
+2. **Near-overflow context at finalize — a runtime-state axis, capability-agnostic.** On a long cascade even a large, capable model can reach a point where forcing its *next* turn to emit `signal_completion` would ship a now-oversized request and 400. Here the accumulator pairs with the `auto_finalize_on_complete` quirk (below): the framework synthesizes the completion from accumulated state **server-side, with no further model round-trip**, ending the turn before the oversized request is built.
+
+Same output contract, two ways in: compose it in one shot when you can, accumulate it field-by-field when one-shot isn't viable — a weak composer (reason 1) *or* a near-full context window at finalize (reason 2, any model).
+
+So **whenever a `completion_payload_schema` is declared**, `get_tool_schemas()` registers two sibling tools alongside `signal_completion` and both are auto-approved (`lifecycle_tools.py:344-437`, `564-574`):
+
+- **`prepare_completion(field_path, value)`** — set exactly **one** field per call into session-tier *accumulated* state. `field_path` is dot-notation with `[idx]` array indices (`service`, `stack_config.language`, `endpoints[0].operation`, `endpoints[2]` to set a whole element). Both args are required *by design* — the earlier single-`partial`-object shape had `{}` as a minimum-cost valid emission, which is exactly the collapse it exists to prevent (`lifecycle_tools.py:979-1016`). The value is validated against the schema's type for that path (with `required[]` relaxed so partials are legal); the call returns `accepted` (the path:value set), `rejected` (path:reason on a type/structure miss), `pending_required_fields_with_descriptions` (what's still missing), and `is_complete` (`lifecycle_tools.py:1018-1192`).
+- **`query_completion()`** — read-only inspect of accumulated state. Returns `accumulated`, `pending_required_fields_with_descriptions`, and `is_complete` without mutating anything; for when the model loses track of what it has contributed or wants to confirm completeness before finalizing (`lifecycle_tools.py:415-437`).
+- **arg-less `signal_completion()`** — when called with **no args** and accumulated state exists, the framework synthesizes the payload from accumulated, runs the same `jsonschema.validate`, and finalizes. If anything required is still missing it rejects with the same `validation_failed` shape plus `pending_required_fields_with_descriptions`, so the model knows what to `prepare_completion` next (`lifecycle_tools.py:638-707`). The legacy single-shot `signal_completion(<full payload>)` path is unchanged and remains the right call for capable models.
+
+The contract is "readFile-style": transcribe one observation per call across many turns, `query_completion` to check, then arg-less `signal_completion` to finish.
+
+### Auto-complete — `auto_finalize_on_complete` and the composite `is_complete`
+`is_complete` is a **composite** of two layers. The **structural floor** is the schema's `required[]` (all present → floor met). On top of it, `phase: "completeness"` completion processors add a **semantic** layer: they inspect the accumulated payload against run-specific signals and return `incomplete[]` messages — surfaced to the model as neutral `still_needed` guidance (no retry penalty, no hard block), which keep `is_complete` False until cleared. The gate runs only once the cheap floor check passes, so it fires ~once near the end rather than per field (`lifecycle_tools.py:877-963`, `1163-1196`). See [completion processors](14-completion-processors.md) for the `finalization` vs `completeness` phase split.
+
+When the composite `is_complete` flips True **and** the profile opts in via the `auto_finalize_on_complete` provider quirk (default off — completeness can be used for guidance alone), the last `prepare_completion` synthesizes `signal_completion()` **in-process, with no model round-trip** (`lifecycle_tools.py:965-977`, `1198-1228`). This is the load-bearing fix for context-overflow-at-finalize: forcing the model's *next* turn to emit `signal_completion` would still ship the now-oversized request and 400; synthesizing server-side sets `_signal_completion_called` so the turn ends *before* the next request is built. The result carries `auto_finalized: True` (and `auto_finalize_rejected` if a finalization processor still blocked it).
 
 ### Authoring conventions (from `docs/design/payload-schema-conventions.md`)
 - **Always carry `warnings[]` and `errors[]`** — optional string arrays, the sanctioned advisory escape hatches; completion schemas default to `additionalProperties: false` *plus* these two fields (§3.2.1). Their absence caused retry-driven non-determinism when a persona instructed the agent to emit warnings the schema then rejected (§3.2.2).
@@ -45,9 +68,9 @@ On each call the incoming `args` dict **is** the payload; it is validated with `
 1. A profile declares `completion_payload_schema`.
 2. At session configure, `LifecycleTools` calls `resolve_completion_schema()` and caches the dict.
 3. `get_tool_schemas()` exposes `signal_completion` with the schema as its flat parameters (and, when a schema exists, `prepare_completion` / `query_completion` for multi-turn accumulation — `lifecycle_tools.py:344-437`).
-4. The agent calls `signal_completion(<fields>)` as its last action.
-5. `_execute_signal_completion` validates via `jsonschema`; on failure it returns a structured error and the agent retries within `max_turns`.
-6. On success, completion processors run, `AgentCompletedEvent` fires (idempotency-guarded), and the turn terminates.
+4. The agent finalizes one of two ways: **single-shot** — `signal_completion(<fields>)` as its last action; or **accumulator** — repeated `prepare_completion(field_path, value)` calls (optionally `query_completion()` to inspect), then arg-less `signal_completion()` once `is_complete` is True.
+5. `_execute_signal_completion` validates the payload (typed or accumulated-synthesized) via `jsonschema`; on failure it returns a structured error and the agent retries within `max_turns`.
+6. On success, completion processors run, `AgentCompletedEvent` fires (idempotency-guarded), and the turn terminates. If the profile sets `auto_finalize_on_complete`, step 4's final `prepare_completion` performs steps 5–6 server-side the moment the composite `is_complete` flips — no extra model turn.
 
 ## Configuration / authoring
 
@@ -106,6 +129,11 @@ A cascade stage `auto_underwriter` declares `completion_payload_schema: "complet
 - `jaato-server/shared/completion_schema_loader.py:104-186` — three-tier path resolution; canonical `completion_schemas/<name>.json` form.
 - `jaato-server/shared/plugins/subagent/config.py:908-917, 967` — the `completion_payload_schema` profile field and its docstring.
 - `jaato-server/shared/lifecycle_tools.py:713-731` — `jsonschema.validate` of the payload; structured `validation_failed` error on mismatch.
+- `jaato-server/shared/lifecycle_tools.py:242-257` — `_accumulated_payload`: the session-tier state behind the `prepare_completion` / `query_completion` / arg-less `signal_completion` triple, and the small-model composition-burden it addresses.
+- `jaato-server/shared/lifecycle_tools.py:344-437, 564-574` — registers `prepare_completion` / `query_completion` only when a schema is declared, and auto-approves both.
+- `jaato-server/shared/lifecycle_tools.py:638-707` — arg-less `signal_completion`: synthesize from accumulated, validate, or reject with `pending_required_fields_with_descriptions`; `650-666` idempotency guard.
+- `jaato-server/shared/lifecycle_tools.py:979-1228` — `_execute_prepare_completion`: one field per call (`field_path`+`value`), path/type validation, composite `is_complete`, and the `auto_finalize_on_complete` in-process synthesis.
+- `jaato-server/shared/lifecycle_tools.py:877-963` — `_run_completeness_gate`: `phase: "completeness"` processors contribute `incomplete[]`/`still_needed` to the composite `is_complete` (semantic layer over the `required[]` floor).
 - `jaato-server/shared/lifecycle_tools.py:449-508` — `_should_hide_signal_completion`: two gates (no-schema → hide; interactive-root → hide, but `client_type=API` and subagents keep it).
 - `jaato-server/shared/lifecycle_tools.py:33-82` — strict-mode is model-dependent; schema is advisory at sampling time without provider support.
 - `jaato-server/shared/spawn_schema_loader.py:1-24` — symmetric `spawn_payload_schema` resolver (input boundary).
