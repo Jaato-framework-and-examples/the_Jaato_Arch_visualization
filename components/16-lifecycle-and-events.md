@@ -40,7 +40,7 @@ The protocol has no single neighbor — it is the spine the whole stack speaks t
 The ~110 classes group into these families (representative class names, not exhaustive):
 
 - **Connection / session lifecycle** — `ConnectedEvent` (`events.py:322`, carries `protocol_version` + `server_info`), `SessionInfoEvent`, `SessionRestoredEvent` (disk-restore re-attach, with `pending_tool_call_count`), `SessionTerminatedEvent` (`reason` ∈ `natural`/`client_request`/`stopped`/`error`/`cascade_cancelled`), `SlotSettledEvent` (`events.py:455`, cascade slot return).
-- **Agent / turn lifecycle** — `AgentCreatedEvent`, `AgentStatusChangedEvent` (`status` ∈ `active`/`idle`/`done`/`error`), `AgentOutputEvent` (`mode` ∈ `write`/`append`/`flush`), `TurnProgressEvent`, `TurnCompletedEvent`, `AgentCompletedEvent` (`events.py:385`, carries typed `payload`), `ContextUpdatedEvent`.
+- **Agent / turn lifecycle** — `AgentCreatedEvent`, `AgentStatusChangedEvent` (`status` ∈ `active`/`idle`/`done`/`error`), `AgentOutputEvent` (`mode` ∈ `write`/`append`/`flush`), `TurnProgressEvent`, `TurnCompletedEvent`, `AgentCompletedEvent` (`events.py:385`, carries typed `payload`), `AgentErrorEvent` (`events.py:413`, the terminal-error **recovery contract** — fires before teardown so a reactor gets first refusal to recover the failed stage; the error-path mirror of `AgentCompletedEvent`), `ContextUpdatedEvent`.
 - **Tool lifecycle** — `ToolCallStartEvent` (`events.py:518`), `ToolCallEndEvent`, `ToolOutputEvent` (live `tail -f` chunks correlated by `call_id`).
 - **Interactive request/response** — `PermissionRequestedEvent`/`PermissionInputModeEvent`/`PermissionResolvedEvent`, `ClarificationRequested/Question/Resolved`, `ReferenceSelectionRequested/Resolved`, `WorkspaceMismatchRequested/Resolved`. Each pairs a server request with a client `*ResponseRequest`.
 - **Plan / accounting** — `PlanUpdatedEvent`/`PlanStepUpdatedEvent`/`PlanClearedEvent`, `InstructionBudgetEvent`, `GCConfigEvent`.
@@ -57,6 +57,7 @@ One session's life, in temporal order (the heart of this doc):
 4. **Within the turn** (interleaved): `AgentOutputEvent` chunks (`mode="write"` then `append`), an `AgentOutputEvent(mode="flush")` signalling text is done and tools follow, then for each tool: `ToolCallStartEvent` → optionally `ToolOutputEvent` → optionally a `PermissionRequestedEvent`/`PermissionInputModeEvent` → client `PermissionResponseRequest` → `PermissionResolvedEvent` → `ToolCallEndEvent`. Token accounting arrives via `TurnProgressEvent` + `ContextUpdatedEvent`.
 5. **Turn ends.** `TurnCompletedEvent` (NOT terminal — multi-turn flows emit several). For the main agent, the terminal signal is `AgentStatusChangedEvent(status="done"|"idle")`.
 6. **Completion.** If the agent's `signal_completion` is **accepted** — its payload passes the `completion_payload_schema` *and* every completion processor — `AgentCompletedEvent` fires (`core.py:2920`) with the typed `payload`. (A rejected call emits no event and returns a self-correction prompt; the agent retries, so a called-but-rejected completion does not advance a cascade.) After post-completion wrap-up drains, `SessionTerminatedEvent(reason="natural")` is emitted (`core.py:2941`).
+6b. **Terminal error (recovery path).** If the agent instead hits an error the framework cannot self-resolve — its automatic management (`with_retry` for retryable provider errors, the completion nudge loop) is **exhausted** or never applied — `AgentErrorEvent` fires (`events.py:413`) at the three framework-out-of-moves sites (model-thread terminal, nudge exhaustion, bootstrap failure), **always before** the back-compat `SessionTerminatedEvent(reason="error")`. It carries `agent_id`/`session_id`, `error_type`, `error_summary`, an optional provider `request_id`, the reactor-level `attempt` count (echoed from `agent_params`, not `with_retry`'s internal count), and an advisory `classification` hint (never a gate). This is the error-path counterpart to step 6's `AgentCompletedEvent`: a reactor with an `AGENT_ERROR` handler gets **first refusal** to recover the stage (re-spawn, reroute to another model/provider, escalate) via `create_session`, then marks the `session_id` handled so the legacy terminated handler no-ops. A cascade with no handler ignores it and the terminated event drives the legacy abort — fully back-compatible. Recovery is **decoupled from transience**: a non-transient error is still stage-recoverable.
 7. **Slot settle (cascade only).** At the END of `JaatoServer.shutdown`, after the runner slot has **settled** — returned warm, *or* been torn down on error/cold — `SlotSettledEvent` fires once per cascade stage (`core.py:5440`, gated on `cascade_driver_id`), with `was_warm` reporting which. It fires on **all** teardown paths, so the two-event handoff never stalls on a failed stage.
 8. **Teardown.** Transport closes; on reconnect the cycle restarts at step 1 (possibly with `SessionRestoredEvent`).
 
@@ -74,6 +75,8 @@ A cascade is a chain of stages (e.g. `discovery` → `codegen` → `review`), ea
 - `SlotSettledEvent` (`events.py:455`) fires *late* — once per cascade stage at the very END of `JaatoServer.shutdown`, gated on `cascade_driver_id`, after the slot has **settled** (returned warm, *or* torn down on error/cold), on **all** teardown paths so there is no timeout and no stall. Its `was_warm` flag reports whether the next spawn will reuse the warm slot. A reactor handling it triggers the actual `create_session` — which lands in the warm slot (~7s).
 
 So the temporal rule is: **persist on `AgentCompletedEvent`, spawn on `SlotSettledEvent`.** `SessionTerminatedEvent` fires *earlier still* (before the slot returns), so spawning on it also races the slot and cold-spawns (`events.py:471-477`). The right event is the one whose position in the timeline guarantees the warm slot is free. This is the deliverable's centerpiece. *(All shipped; `was_warm`/`pool_slot_pid` are observability fields — the spawn happens either way, the flag only says whether it'll be fast.)*
+
+**The error-path counterpart: `AgentErrorEvent`.** The success path hands the next stage off on completion; the *failure* path hands it off on error. Before this event existed, a terminal stage error was cascade-fatal — `core.py`'s model-thread chokepoint unconditionally emitted `SessionTerminatedEvent(reason="error")` and returned, so a reactor got only a post-mortem and the driver could do nothing but write `cascade_aborted.json`. `AgentErrorEvent` (`events.py:413`) makes terminal errors **reactor-managed**: it fires once the framework is out of moves (`with_retry` exhausted, nudge loop exhausted, or bootstrap failure), **always before** the terminated event, giving the cascade's `AGENT_ERROR` handler first refusal to recover the stage — re-spawn, reroute to a different model/provider, or escalate — via the same `create_session` path. A handled `session_id` makes the legacy terminated handler no-op; an unhandled one falls through to the legacy abort. Two attempt counters stay separate by design: `with_retry`'s internal per-request count is framework-only and never surfaced, while `AgentErrorEvent.attempt` is the **reactor-level** re-spawn count, echoed verbatim from the spawn's `agent_params["attempt"]` — the reactor (not the framework) owns the cap. So the symmetric rule is: **recover on `AgentErrorEvent`, just as you persist on `AgentCompletedEvent`** — both are the reactor's "stage is done, here's your handoff point" signal, one for success and one for failure.
 
 ## Diagram
 
@@ -105,10 +108,16 @@ sequenceDiagram
     R->>C: TurnCompletedEvent
 
     Note over C,X: Completion
-    R->>C: AgentStatusChangedEvent done/idle
-    R->>X: AgentCompletedEvent
-    Note over X: reactor PERSISTS next-stage spec, does NOT spawn yet
-    D->>C: SessionTerminatedEvent natural
+    alt signal_completion accepted
+        R->>C: AgentStatusChangedEvent done/idle
+        R->>X: AgentCompletedEvent
+        Note over X: reactor PERSISTS next-stage spec, does NOT spawn yet
+        D->>C: SessionTerminatedEvent natural
+    else terminal error (framework out of moves)
+        R->>X: AgentErrorEvent
+        Note over X: reactor RECOVERS stage (re-spawn/reroute/escalate), marks handled
+        D->>C: SessionTerminatedEvent error
+    end
 
     Note over C,X: Slot-return
     D->>X: SlotSettledEvent was_warm=true
@@ -142,6 +151,8 @@ sequenceDiagram
 - `jaato/jaato-sdk/jaato_sdk/events.py:287` — `Event` Pydantic base (`type`, `timestamp`, `extra='ignore'`, `to_json`).
 - `jaato/jaato-sdk/jaato_sdk/events.py:322` / `1034` — `ConnectedEvent` / `SessionInfoEvent` (connect + snapshot-on-connect).
 - `jaato/jaato-sdk/jaato_sdk/events.py:385` — `AgentCompletedEvent` (typed `payload`; reactor persists on this).
+- `jaato/jaato-sdk/jaato_sdk/events.py:80,413` — `EventType.AGENT_ERROR` / `AgentErrorEvent` (terminal-error recovery contract; reactor recovers on this; fires before `SessionTerminatedEvent(reason="error")`).
+- `jaato/jaato-server/server/core.py:3387` — `_emit_agent_error` (routes through the `on_agent_error` hook; emitted at the 3 framework-out-of-moves sites: model-thread terminal `core.py:4585`, nudge exhaustion `core.py:4785`, bootstrap failure).
 - `jaato/jaato-sdk/jaato_sdk/events.py:455` — `SlotSettledEvent` (`cascade_driver_id`, `was_warm`; reactor spawns on this; fires once per stage at end of shutdown).
 - `jaato/jaato-sdk/jaato_sdk/events.py:518` — `ToolCallStartEvent` (tool-call lifecycle start; `call_id` correlation).
 - `jaato/jaato-sdk/jaato_sdk/events.py:1241` — `SendMessageRequest` (representative client→server request).
