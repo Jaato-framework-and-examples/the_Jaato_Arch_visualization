@@ -1,115 +1,133 @@
-# Data Redaction & Anonymization
+# Data Anonymization (Pseudonymization — Presidio + NaCl)
 
-> **One-sentence definition.** A homegrown, pluggable chain of per-attribute and per-message transformer callbacks that rewrites sensitive content at two chokepoints — outbound telemetry span attributes and the session's canonical conversation history — so prompts, tool arguments, and PII never reach traces or persisted history in raw form.
-> **Layer (bottom→top):** a cross-cutting data-protection concern; the *outbound* half of the codebase's secrets-in / data-out symmetry · **Lives in:** `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py` (the span redactor chain) + `jaato/jaato-server/shared/session_history.py` (the history transformer pair).
+> **One-sentence definition.** A session-scoped pseudonymization substrate that uses **Presidio** to recognize PII and **NaCl (libsodium/pynacl)** to encrypt the placeholder↔raw mapping at rest — wired into the daemon at **four narrow architectural seats** so the model and traces see masked placeholders (`<EMAIL_1>`, `<PERSON_2>`), while trusted tools and the user's own display get the real values swapped back.
+> **Layer (bottom→top):** a cross-cutting data-protection subsystem; PREMIUM, plugging into four public extension seams · **Lives in:** PREMIUM `jaato-premium/jaato_premium/pseudonymization/` (`extension.py`, `recognizers.py`, `pseudonym_table.py`, `redaction.py`, `keys.py`, `audit.py`, `tool_dispatch.py`, `message_walk.py`) wiring into PUBLIC seams in `jaato/jaato-server/shared/session_history.py`, `…/plugins/telemetry/otel_plugin.py`, and `…/server/core.py`.
 
 ## What it is
 
-Once you turn on tracing (see `17-telemetry`), every prompt, every tool argument, and every model output is a candidate to leave the process as a span attribute headed for an external backend. Some of that content is sensitive — bearer tokens pasted into a tool call, customer PII in a prompt, secrets in an output. **Redaction** is the layer that scrubs those values *before* they cross a trust boundary.
+Conversation data is full of PII — names, emails, national IDs, bearer tokens, home-directory paths. Sending it verbatim to a model provider, a tracing backend like Arize Phoenix, or a third-party tool widens the exposure surface every time. **Pseudonymization** shrinks it: detect sensitive spans, replace each with a stable placeholder, and keep the reverse mapping in a session-scoped, encrypted table that only the daemon (and only for the live session) can use to swap real values back when they're genuinely needed.
 
-The important thing to state plainly: **this is not Presidio.** A test helper in the codebase spells out the intent — it builds a trivial "redact PII" stand-in *"without pulling in Presidio,"* because the framework's job is to own the **chokepoints and the chain semantics**, not to ship a PII engine. The default redactor chain is **empty**; what jaato provides is (a) a coarse, built-in, length-preserving blanking of known-sensitive attributes, and (b) a registration API where a real recognizer — Presidio-grade or otherwise — can be plugged in.
+Detection is **Presidio** (`presidio-analyzer`): a configured `AnalyzerEngine` with the stock recognizer set (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, IP_ADDRESS, US_SSN, IBAN_CODE, …) plus jaato-specific `PatternRecognizer`s for session IDs, workspace paths, and `Bearer` tokens — and a Spanish profile (DNI / NIE / IBAN-ES / phone, on the `es_core_news_lg` spaCy model) selectable per session. Crypto is **NaCl**: the pseudonym table serializes to a `SecretBox` AEAD blob at rest, and an optional tamper-evident audit trail is `SealedBox`-encrypted to an offline auditor's public key.
 
-There are two independent surfaces. The **telemetry redactor chain** scrubs span attributes on their way out to a tracing backend. The **session-history transformer pair** rewrites `Message` objects on their way *into* canonical history (and can un-rewrite them for a trusted display/audit read). They share a philosophy but have different shapes and live in different files.
+A 2026 design verification concluded the event bus is the **wrong** place to do this — sensitive conversation content doesn't flow through the bus. The right shape is **four narrow hooks anchored to seams the data actually crosses**: history, tool dispatch, user-display output, and telemetry. The public framework exposes those four extension points; the premium `PseudonymizationExtension` occupies them.
+
+This is a PREMIUM daemon extension. It auto-loads when `jaato-premium[pseudonymization]` is installed, and can be turned off per session with `JAATO_REDACTION_ENABLED=off`.
 
 ## Where it sits in the stack
 
-The telemetry redactor lives *inside* the **telemetry plugin** (`17-telemetry`): it is a feature of the OTel span wrapper, run at the single `set_attribute` chokepoint every span attribute passes through. With the null telemetry plugin, redactor registration is accepted and ignored (no spans are produced, so nothing to scrub). The history transformer lives on **`SessionHistory`**, the canonical message container owned by the **session**. *Sideways*, redaction is the **outbound** mirror of the **secrets layer** (`19-secrets`): secrets are resolved so they never leak *in* (only safe provenance is ever recorded), and redaction ensures content never leaks *out* to traces.
+It is a **daemon extension** (entry point `pseudonymization = …extension:create_extension`) that installs per-session hooks on four existing seams. *Below* it are those seams in the public core — `SessionHistory`, the tool executor, the outbound `AgentOutputEvent` path, and the telemetry plugin's span wrapper. *Above / sideways* sit everything that reads conversation state: the **memory** plugin, the **session journal**, the **GC** summarizer, **reactors**, and **telemetry** — all of which go through the canonical history accessor and therefore see the redacted view for free. It is the richer sibling of the **secrets** layer (`19-secrets`): secrets ensure credentials never leak *in*; this ensures PII is masked *out* (to model, tools, traces) and reversed only at trusted boundaries.
 
 ## Responsibilities
 
-- Provide a single chokepoint where every outbound span attribute can be inspected and rewritten.
-- Apply a built-in, length-preserving blanking of known-sensitive attributes by default (gated by a flag).
-- Expose a registration API (`register_attribute_redactor`) as the extension point for a real PII/anonymization backend — the chain runs over **every** attribute, so one registration covers all ~20+ emit sites.
-- Provide a parallel write-side / read-side transformer pair on canonical history so PII can be pseudonymized at rest and reversed only for trusted readers.
-- Default to safe-and-empty: redact content coarsely out of the box, run no PII engine unless one is registered.
+- Recognize PII spans with Presidio (stock + jaato-specific + per-language recognizers).
+- Maintain a **session-scoped** bidirectional placeholder↔raw `PseudonymTable`, idempotent on re-occurrence, AEAD-encrypted at rest.
+- Occupy the **four seats**: redact inbound history (seat 1), swap back for trusted tools (seat 2), swap back for user display (seat 3), redact telemetry span attributes (seat 4).
+- Derive per-session keys from a daemon master key; emit an optional sealed-box audit trail the daemon itself cannot decrypt.
+- Default to safe: trust is opt-in-by-code (raw accessors / tool allowlist), telemetry is always redacted, the table dies with the session.
 
 ## Key concepts & structure
 
-### The single chokepoint: `_SpanWrapper.set_attribute` (`otel_plugin.py:219`)
-Every span attribute — whether set directly or via `set_input_messages` / `set_output_messages` / `set_metadata`, which all delegate here — passes through this one method. That is what lets a single redactor registration cover the entire surface without per-site instrumentation.
+### The four seats (`extension.py:194`, `_on_session_ready`)
+On every freshly-set-up session the extension wires four transformers anchored to real seams:
 
-### Two layers inside the chokepoint
-1. **Built-in length-preserving blanking** (`otel_plugin.py:230`). When `redact_content` is on, attributes in `_SENSITIVE_ATTRS = {"input.value", "output.value"}` (and message-content / tool-argument paths) are replaced with `"[REDACTED: N chars]"` — the value is gone, only a length hint survives. Tool-call **function names and roles are never blanked** (they're needed to read the trace).
-2. **The registered redactor chain** (`otel_plugin.py:247`). After blanking, `for fn in self._redactors: value = fn(key, value)` runs over **every** attribute regardless of the flag. The chain is empty by default.
+- **Seat 1 — history container redaction.** `set_history_inbound_transformer` pseudonymizes each message **on append** (so canonical history stores placeholders); `set_history_raw_view_transformer` gives **trusted callers** the raw view via an explicit accessor. Trust becomes "I called the raw accessor," not a config flag. This single seat covers memory, journal, GC, reactor, and telemetry-history reads at once.
+- **Seat 2 — tool dispatch swap-back** (`tool_dispatch.py`). Before a tool runs, `swap_back_args` restores real values — tools are **trusted by default** (they need real paths/values to work). Operators list exceptions in `JAATO_REDACTION_UNTRUSTED_TOOLS` (those keep placeholders — for tools that ship args to external sinks). Tool **results** always pass back through `redact_result`, so new sensitive values discovered in output get fresh placeholders before they reach history.
+- **Seat 3 — outbound user-display swap-back.** Every `AgentOutputEvent` leaving the daemon is swapped back so the **user sees their own data**. The user owns the data, so this boundary is implicitly trusted — the only non-symmetric (un-redacting) inbound→outbound direction.
+- **Seat 4 — telemetry attribute redaction** (`attribute_redactor.py:47`). Registered once globally via the public `register_attribute_redactor` hook (see `17-telemetry`). It is **stateless and irreversible** — no `PseudonymTable`, just bare-class masks (`<EMAIL_ADDRESS>`, `<PERSON>`), because a global redactor can't consult a per-session table and cross-span correlation would itself be a re-identification surface. It **bypasses** any `redaction.audit.*` attribute (already encrypted).
 
-### The redactor shape and chain ordering
-A telemetry redactor is `Callable[[str, Any], Any]` — it receives `(attribute_key, value)` and returns the value to actually set. Redactors stack in **registration order**, each seeing the previous one's output (tests assert a `[first, second]` registration yields `"[2][1]x"`). For the two built-in-blanked keys, the chain sees the *already-blanked* form; for all other keys it sees the raw value.
+### Recognition: Presidio analyzer + jaato recognizers (`recognizers.py`)
+`build_default_analyzer(language=…)` builds the `AnalyzerEngine`; `jaato_recognizers()` adds `session_id_recognizer` (`YYYYMMDD_HHMMSS`), `workspace_path_recognizer` (`/home/<user>/…`), and `bearer_token_recognizer`. `language="es"` swaps to `es_core_news_lg`, drops US recognizers that false-positive on Spanish shapes, and adds DNI / NIE / IBAN-ES / phone. `analyze_to_spans` turns analyzer hits into `Span(start, end, class_name)`. Analyzers are cached per language.
 
-### `register_attribute_redactor` — the extension point (`otel_plugin.py:372`)
-This is "seat 4" of a four-seat pseudonymization design. It simply appends to the chain. A consumer wanting Presidio-grade recognition writes a callable wrapping a Presidio analyzer/anonymizer and registers it **once**, typically from a session hook or daemon extension `start()` so it is wired before any span is created. **This API exists; a concrete PII engine does not** — that is the consumer's to bring.
+### Placeholders & the pseudonym table (`redaction.py`, `pseudonym_table.py`)
+Placeholders are `<CLASS_N>` (`PLACEHOLDER_RE = <([A-Z][A-Z0-9_]*)_(\d+)>`); `redact_text` applies spans, `swap_back_text` reverses them. `PseudonymTable` is a session-scoped bidirectional map with per-class counters, idempotent `add` (re-occurrence returns the existing token), and `serialize_encrypted()` → a NaCl `SecretBox` AEAD blob stored as opaque bytes via the framework's session-attached-state. It dies with the session — **no cross-session re-identification**.
 
-### The session-history transformer pair (`session_history.py:22`)
-Orthogonal, and a different shape: `MessageTransformer = Callable[[Message], Message]`. `set_inbound_transformer(fn)` runs on every message at `append()`/`replace()`, *before* it lands in canonical history — pseudonymize PII so the stored copy never holds raw values. `set_raw_view_transformer(fn)` runs per-message in the `messages_raw` property for the trusted-reader / audit path — un-pseudonymize for display, without ever mutating the stored canonical copy. The two are coupled (if at all) only by closures over the consumer's own pseudonym table; the framework holds no such state. Surfaced on the session as `set_history_inbound_transformer` / `set_history_raw_view_transformer`.
-
-### The `redact_content` flag
-Defaults to `True` (env `JAATO_TELEMETRY_REDACT_CONTENT`). It controls **only** the coarse built-in blanking of `input.value`/`output.value` and message/tool-arg content; the registered chain is independent and always fires.
+### Keys & sealed-box audit (`keys.py`, `audit.py`)
+A 32-byte daemon **master key** lives at `~/.jaato/redaction-key` (mode 0600); the per-session key is `HMAC-SHA256(master, session_id)`. On meaningful table mutations, `emit_audit_span` emits a `redaction.audit` span carrying the **full table sealed-box-encrypted** (`AUDIT_SCHEME = "nacl-sealedbox-v1"`, X25519 + XChaCha20-Poly1305) to the pubkey in `JAATO_REDACTION_AUDIT_PUBKEY`. An offline private-key holder reconstructs table evolution from telemetry alone — **the daemon cannot decrypt its own audit trail**, so daemon compromise leaves history confidential.
 
 ## Lifecycle / flow
 
-1. **Wire (once).** A consumer calls `plugin.register_attribute_redactor(fn)` at process/session start — appended to the per-process chain, before any span exists. (Or `session.set_history_inbound_transformer(fn)` for the history surface.)
-2. **Span attribute set.** Session/plugin code calls `wrapper.set_attribute(...)` (directly or via the message/metadata helpers). For sensitive keys with `redact_content=True`, built-in blanking runs first; then the redactor chain runs; then the real OTel span receives the final value.
-3. **Export.** The span ships to the OTLP/Phoenix backend already scrubbed.
-4. **History (parallel).** On every `append()`, the inbound transformer rewrites the `Message` before it joins canonical history; a trusted reader of `messages_raw` gets the un-rewritten view, the stored copy untouched.
+1. **Install / load.** `pip install 'jaato-premium[pseudonymization]'` pulls `pynacl` + `presidio-analyzer`; the daemon auto-loads `PseudonymizationExtension` (import fails fast with an actionable message if the extra is missing). Per session, `JAATO_REDACTION_ENABLED` (workspace `.env` → `os.environ` → default true) decides whether to wire.
+2. **Session ready.** `_on_session_ready` builds/caches the analyzer for the session's language, loads-or-creates the session `PseudonymTable`, and installs seats 1–4.
+3. **Inbound.** A user message is appended → seat 1 runs Presidio → spans → `redact_text` → placeholders land in canonical history; the model context is redacted.
+4. **Tool call.** Seat 2 swaps placeholders back to raw for trusted tools (or leaves them for untrusted ones); the result is re-redacted on the way back.
+5. **User output.** Seat 3 swaps placeholders back in the outbound `AgentOutputEvent` so the user sees real values.
+6. **Telemetry.** Seat 4 masks PII in span attributes (bare-class, irreversible) before they reach the OTLP exporter; audit spans carry the encrypted table.
+7. **Teardown.** The session ends; the table (and its swap-back power) dies with it.
+
+## Configuration / authoring
+
+```bash
+pip install 'jaato-premium[pseudonymization]'
+python -m spacy download en_core_web_lg     # or es_core_news_lg for Spanish
+
+export JAATO_REDACTION_ENABLED=true                 # off|0|no|false to disable (per session via workspace .env)
+export JAATO_REDACTION_LANGUAGE=es                  # default "en"
+export JAATO_REDACTION_UNTRUSTED_TOOLS=webhook,http # tools that should KEEP placeholders in args
+export JAATO_REDACTION_AUDIT_PUBKEY=/etc/jaato/audit.pub   # opt-in sealed-box audit (unset → none)
+```
 
 ## Relationship to neighboring components
 
-Redaction is a feature of the **telemetry plugin** (`17-telemetry`) — it has no spans to scrub without it, and it is a no-op under the null telemetry plugin. It is the **outbound** counterpart to the **secrets layer** (`19-secrets`), which guarantees credentials never leak *inbound* (only `token_len`/`token_prefix` provenance is ever recorded). The **session** owns the history transformer pair on `SessionHistory`. Related but distinct scrubbing surfaces elsewhere — auth-header redaction in the service connector, traceback path sanitization on the runner RPC channel, and session-env non-leakage in the envelope — share the same discipline but are separate mechanisms.
+Seat 4 plugs into the **telemetry** plugin's public `register_attribute_redactor` hook (`17-telemetry`); seat 1 into `SessionHistory`'s inbound / raw-view transformer pair; seat 3 into the **lifecycle/event** outbound path (`16-lifecycle-and-events`); seat 2 into the tool executor. Because memory, journal, GC, and **reactors** all read through the canonical history accessor, seat 1 redacts them in one place. It is the outbound-protection counterpart to **secrets** (`19-secrets`), and like the secret resolvers it is shipped **out-of-tree** (premium) and reached through public extension points — the open-source core provides the seams, premium provides the Presidio+NaCl implementation.
 
 ## Example
 
-A model emits a tool call whose arguments JSON contains an auth token: `{"url": "...", "token": "sk-live-abc123"}`. Telemetry records the turn via `set_output_messages([...])`:
-
-1. The tool's **function name is set verbatim** (you need it to read the trace), but the arguments string hits the sensitive path: because `redact_content=True`, it becomes `"[REDACTED: 41 chars]"` — the raw token is gone.
-2. The set still flows through `set_attribute`, so the **registered chain also runs**. A Presidio-style redactor wired via `register_attribute_redactor` is the catch-all for any token that *wasn't* on the coarse `_SENSITIVE_ATTRS` list — e.g. it could rewrite an email `alice@example.com` → `<EMAIL_1>` in free-text content.
-3. The Phoenix span attribute `...tool_call.function.arguments` holds `[REDACTED: 41 chars]`, never `sk-live-abc123`. (This default is asserted end-to-end in the plugin tests: `"[REDACTED:"` present, roles and tool names untouched.)
+A user writes "email the invoice to alice@acme.com for DNI 12345678Z." **(Seat 1)** Presidio tags `alice@acme.com` (EMAIL_ADDRESS) and `12345678Z` (ES_DNI); the table maps them to `<EMAIL_1>` / `<ES_DNI_1>`; canonical history (and thus the model context) stores the placeholders. **(Seat 2)** The model calls `send_email(to="<EMAIL_1>", …)`; because `send_email` is trusted (not in `JAATO_REDACTION_UNTRUSTED_TOOLS`), seat 2 swaps `<EMAIL_1>` back to `alice@acme.com` before the tool runs. **(Seat 3)** The assistant's reply "I've emailed alice@acme.com" streams out: the stored text held `<EMAIL_1>`, and seat 3 swaps it back so the user sees the real address. **(Seat 4)** The tool span's `tool.input.value` is masked to `<EMAIL_ADDRESS>` (bare class, irreversible) before it reaches Phoenix; if audit is enabled, a `redaction.audit` span carries the sealed-box-encrypted table. The session ends and the table — the only thing that could re-link `<EMAIL_1>` to `alice@acme.com` — is gone.
 
 ## Diagram
 
 ```mermaid
 flowchart TD
-    subgraph OUT["Outbound — telemetry span attributes"]
-        callers["~20+ emit sites: set_input_messages / set_output_messages / set_metadata / set_attribute"]
-        choke["_SpanWrapper.set_attribute (single chokepoint)"]
-        builtin["built-in blanking (redact_content): input.value/output.value → '[REDACTED: N chars]' (names/roles kept)"]
-        chain["registered redactor chain (empty by default) — runs on EVERY attribute"]
-        ext["register_attribute_redactor() ← Presidio / custom PII engine plugs in HERE"]
-        span["OTel span → Phoenix (scrubbed)"]
-    end
+    presidio["Presidio AnalyzerEngine (stock + jaato + ES recognizers) → spans"]
+    table["PseudonymTable (session-scoped, &lt;CLASS_N&gt;, NaCl SecretBox at rest)"]
 
-    subgraph IN["Inbound — canonical history"]
-        msg["Message (may carry PII)"]
-        inb["set_inbound_transformer (append/replace)"]
-        canon["canonical history (pseudonymized at rest)"]
-        rawv["messages_raw + set_raw_view_transformer (trusted reader / audit)"]
-    end
+    user["user message (PII)"]
+    s1["SEAT 1: history inbound redact"]
+    hist["canonical history (placeholders) → model / memory / journal / GC / reactor"]
 
-    callers --> choke --> builtin --> chain --> span
-    ext -.->|"register once at start"| chain
-    msg --> inb --> canon
-    canon --> rawv
+    model["model output (placeholders)"]
+    s2["SEAT 2: tool dispatch — swap-back (trusted) / keep (untrusted)"]
+    tool["tool runs"]
+    s3["SEAT 3: AgentOutputEvent — swap-back"]
+    disp["user display (real values)"]
 
-    style choke fill:#fff3cd,stroke:#d39e00,stroke-width:2px
-    style ext fill:#f8d7da,stroke:#c82333,stroke-width:2px,stroke-dasharray:4 3
-    style span fill:#d4edda,stroke:#28a745,stroke-width:2px
+    s4["SEAT 4: telemetry attr redact (stateless, bare-class, irreversible)"]
+    otlp["OTLP → Arize Phoenix (masked)"]
+    audit["audit.py: SealedBox table → redaction.audit span (daemon can't decrypt)"]
+
+    user --> s1 --> hist --> model
+    presidio -.-> s1
+    table <--> s1
+    model --> s2 --> tool
+    model --> s3 --> disp
+    table <--> s2
+    table --> s3
+    hist --> s4 --> otlp
+    table --> audit --> otlp
+
+    style table fill:#fff3cd,stroke:#d39e00,stroke-width:2px
+    style s4 fill:#f8d7da,stroke:#c82333,stroke-width:2px
+    style disp fill:#d4edda,stroke:#28a745,stroke-width:2px
+    style otlp fill:#cce5ff,stroke:#004085,stroke-width:2px
 ```
 
 ## Diagram brief (for illustration)
 
-- **Layout:** Two parallel lanes. Top lane "Outbound (telemetry)" flows left→right into a single funnel; bottom lane "Inbound (history)" flows left→right into storage. Emphasize the single funnel on the outbound lane.
-- **Boxes (outbound):** a cluster of "~20+ emit sites (set_input_messages / set_output_messages / set_metadata)" → a **funnel box "_SpanWrapper.set_attribute — single chokepoint"** (highlighted) → "built-in blanking (redact_content): input/output.value → '[REDACTED: N chars]'; tool names & roles kept" → "registered redactor chain — empty by default, runs on EVERY attribute" → "OTel span → Phoenix (scrubbed)" (highlighted green). A dashed red callout box **"register_attribute_redactor() — Presidio / custom PII engine plugs in HERE"** pointing into the chain.
-- **Boxes (inbound):** "Message (may carry PII)" → "set_inbound_transformer (at append/replace)" → "canonical history — pseudonymized at rest" → a side branch "messages_raw + set_raw_view_transformer (trusted reader / audit)".
-- **Arrows:** straight flow arrows along each lane; one dashed arrow from the extension-point callout into the chain labeled "register once at start".
-- **Emphasis:** The **single chokepoint funnel** (one registration covers everything) and the **dashed "Presidio plugs in here" callout** (it's an extension point, not a bundled engine). Tint the scrubbed Phoenix span green.
-- **Caption:** "Redaction: one chokepoint per direction — span attributes scrubbed before Phoenix, messages pseudonymized before canonical history. The PII engine (Presidio or custom) is a pluggable extension point, not bundled."
+- **Layout:** A central **PseudonymTable** hub feeding four labeled seat-boxes arranged around the data flow; Presidio as the recognizer feeding the inbound seat. Inbound on the left, the four seats as gates, outbound sinks on the right.
+- **Boxes:** "Presidio AnalyzerEngine (stock + jaato + ES recognizers)"; a highlighted center hub **"PseudonymTable — session-scoped, &lt;CLASS_N&gt;, NaCl SecretBox at rest"**; "user message (PII)"; four seat gates labeled **SEAT 1 history-inbound-redact**, **SEAT 2 tool-dispatch swap-back (trusted) / keep (untrusted)**, **SEAT 3 AgentOutputEvent swap-back**, **SEAT 4 telemetry redact (stateless, bare-class, irreversible)**; sinks "canonical history → model/memory/journal/GC/reactor", "tool runs", "user display (real values)" (green), "OTLP → Arize Phoenix (masked)" (blue), "audit: SealedBox table → redaction.audit span (daemon can't decrypt)".
+- **Arrows:** user→Seat1→history→model; Presidio dashed→Seat1; table↔Seat1, table↔Seat2, table→Seat3 (un-redact), table→audit; model→Seat2→tool; model→Seat3→display; history→Seat4→Phoenix; audit→Phoenix.
+- **Emphasis:** The **PseudonymTable hub** (the secret that makes swap-back possible, encrypted at rest, dies with the session) and the contrast between **reversible seats 1–3** (consult the table) and the **irreversible, stateless Seat 4** (red, bare-class masks). Note "trusted by default" on Seat 2 and "user owns the data" on Seat 3.
+- **Caption:** "Four-seat pseudonymization: Presidio detects PII, a session-scoped NaCl-encrypted table maps it to placeholders — masked for the model and traces, swapped back only for trusted tools and the user's own display."
 
 ## Source references
-- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:219` — `_SpanWrapper.set_attribute`: the single chokepoint (built-in blanking `:230`, redactor chain loop `:247`).
-- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:202` — `_SENSITIVE_ATTRS = {"input.value","output.value"}` (coarse blanking set).
-- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:285` — `set_input_messages`/`set_output_messages`/`set_metadata` all route through `set_attribute`.
-- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:372` — `register_attribute_redactor` (the extension point); `_attribute_redactors` chain field `:368`; `redact_content` default `True` `:352`.
-- `jaato/jaato-server/shared/plugins/telemetry/plugin.py:391` — `register_attribute_redactor` on the `TelemetryPlugin` protocol ("seat 4", single-registration claim).
-- `jaato/jaato-server/shared/plugins/telemetry/null_plugin.py:160` — no-op redactor registration under the null plugin.
-- `jaato/jaato-server/shared/tests/test_session_history.py:397` — the *"without pulling in Presidio"* comment + `_redact_text` stand-in.
-- `jaato/jaato-server/shared/session_history.py:82` — `set_inbound_transformer`; `set_raw_view_transformer` `:98`; `messages_raw` `:190`.
-- `jaato/jaato-server/shared/jaato_session.py:7278` — session-level `set_history_inbound_transformer` / `set_history_raw_view_transformer`.
-- `jaato/jaato-server/shared/plugins/telemetry/tests/test_attribute_redactors.py:31` — chain semantics: unset=identity, registration-order chaining, after-built-in ordering, all-paths coverage.
+- `jaato-premium/jaato_premium/pseudonymization/extension.py:156` — `PseudonymizationExtension`; `_on_session_ready` wiring all four seats `:194` (seat 1 `:240`/`:243`, seat 3 `:247`, seat 2 `:255`–`:281`, seat 4 `:281`/`_wire_seat4` `:368`).
+- `jaato-premium/jaato_premium/pseudonymization/recognizers.py:210` — `build_default_analyzer`; `jaato_recognizers` `:112`; `analyze_to_spans` `:292`.
+- `jaato-premium/jaato_premium/pseudonymization/redaction.py:40` — `PLACEHOLDER_RE` (`<CLASS_N>`); `redact_text` `:43`; `swap_back_text` `:79`.
+- `jaato-premium/jaato_premium/pseudonymization/pseudonym_table.py:69` — `PseudonymTable.add` (idempotent); `serialize_encrypted` (NaCl `SecretBox`) `:118`; `get_raw` `:97`.
+- `jaato-premium/jaato_premium/pseudonymization/keys.py:29` — `load_or_create_master_key` (`~/.jaato/redaction-key`, 0600); `derive_session_key` (HMAC-SHA256) `:84`.
+- `jaato-premium/jaato_premium/pseudonymization/audit.py:46` — `emit_audit_span`; `AUDIT_SCHEME = "nacl-sealedbox-v1"` (X25519 SealedBox) `:32`.
+- `jaato-premium/jaato_premium/pseudonymization/attribute_redactor.py:47` — `redact_attribute` (seat 4: stateless, bare-class, bypasses `redaction.audit.*`).
+- `jaato-premium/jaato_premium/pseudonymization/tool_dispatch.py` — `swap_back_args` / `redact_result` (seat 2; `JAATO_REDACTION_UNTRUSTED_TOOLS`).
+- `jaato-premium/docs/design/pseudonymization-four-seat.md` — the four-seat design (why the event bus is the wrong seat).
+- `jaato-premium/pyproject.toml:48` — optional extra `pseudonymization = ["pynacl>=1.5","presidio-analyzer>=2.2"]`; daemon-extension entry point `:78`.
+- `jaato/jaato-server/shared/session_history.py:82` — PUBLIC seat-1 seam (`set_inbound_transformer` / `set_raw_view_transformer`); `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:372` — PUBLIC seat-4 seam (`register_attribute_redactor`).

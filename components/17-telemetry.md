@@ -69,7 +69,7 @@ export OTEL_SERVICE_NAME=jaato
 
 ## Relationship to neighboring components
 
-The **runtime** owns and installs the single plugin; the **session** is the only thing that emits, opening spans around its turn / LLM / tool / GC operations. The **event bus** (the lifecycle/event protocol) feeds plan/step ids in via a subscription. The **plugin registry** supplies the owning-plugin label for tool spans. The **redaction layer** (`18-redaction`) lives *inside* this plugin as the span-attribute scrubbing chain. Premium can contribute resource attributes via the `jaato.telemetry_resource` entry-point group.
+The **runtime** owns and installs the single plugin; the **session** is the only thing that emits, opening spans around its turn / LLM / tool / GC operations. The **event bus** (the lifecycle/event protocol) feeds plan/step ids in via a subscription. The **plugin registry** supplies the owning-plugin label for tool spans. The premium **anonymization layer** (`18-redaction`) plugs **seat 4** of its four-seat design into this plugin's `register_attribute_redactor` hook, scrubbing PII from span attributes before export. Premium can contribute resource attributes via the `jaato.telemetry_resource` entry-point group.
 
 ## Diagram
 

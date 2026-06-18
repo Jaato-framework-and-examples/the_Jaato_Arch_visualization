@@ -15,7 +15,7 @@ Third, every credential read goes through a **leak-proof discipline**: a session
 
 ## Where it sits in the stack
 
-*Below* the secrets layer is the host environment (env files, OS keychains, external secret stores). *Above* it are **profiles** (`07-profiles`), whose `env` map carries the secret URIs, and **model providers** (`06-model-providers`), which consume the resolved keys. *Sideways*, it touches the **plugin system** (`05-plugins`) — auth plugins are daemon-tier tool plugins marked with the `TRAIT_AUTH_PROVIDER` trait — and the **workspace/runner boundary** (`15-workspace`): the daemon resolves secret URIs because the AppArmor-confined runner cannot exec a secret-store binary like `pass`. It is the **inbound** mirror of the **redaction layer** (`18-redaction`): secrets are resolved so they never leak in; redaction ensures content never leaks out.
+*Below* the secrets layer is the host environment (env files, OS keychains, external secret stores). *Above* it are **profiles** (`07-profiles`), whose `env` map carries the secret URIs, and **model providers** (`06-model-providers`), which consume the resolved keys. *Sideways*, it touches the **plugin system** (`05-plugins`) — auth plugins are daemon-tier tool plugins marked with the `TRAIT_AUTH_PROVIDER` trait — and the **workspace/runner boundary** (`15-workspace`): the daemon resolves secret URIs because the AppArmor-confined runner cannot exec a secret-store binary like `pass`. It is the **inbound** mirror of the **anonymization layer** (`18-redaction`): secrets are resolved so they never leak in; pseudonymization ensures PII never leaks out (to model, tools, or traces).
 
 ## Responsibilities
 

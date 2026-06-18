@@ -56,9 +56,10 @@ tool-call → completion → slot-return → teardown); it is what reactors and 
 it is why a cascade hands off on `SlotSettledEvent` rather than `AgentCompletedEvent`. **Telemetry**
 (doc `17`) is the opt-in OpenTelemetry tracing layer that emits OpenInference spans to a backend like a
 self-hosted Arize Phoenix — free when off, a `session→agent→turn→llm/tool` span tree when on.
-**Redaction** (doc `18`) is the outbound data-protection chokepoint that scrubs span attributes and
-canonical history (homegrown and pluggable — *not* Presidio, but with the extension point where such a
-backend would plug in). **Secrets** (doc `19`) is the inbound mirror: `scheme://path#key` secret URIs
+**Anonymization** (doc `18`) is the PREMIUM pseudonymization subsystem — **Presidio** recognizes PII and
+**NaCl** encrypts a session-scoped placeholder↔raw table, wired at **four seats** (history, tool dispatch,
+user output, telemetry) so the model and traces see masked placeholders while trusted tools and the
+user's own display get the real values swapped back. **Secrets** (doc `19`) is the inbound mirror: `scheme://path#key` secret URIs
 resolved daemon-side by pluggable backends, per-provider auth plugins, and an `AuthAttempt` that records
 provenance but never the secret value.
 
