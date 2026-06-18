@@ -13,7 +13,9 @@ Later, a dedicated **curator** (the "memory-advisor" agent) **drains the raw que
 
 ## Where it sits in the stack
 
-Memory is a **tool plugin** (`05-plugins`) that *also* subscribes to the prompt-enrichment pipeline. *Below* it is the workspace filesystem (`15-workspace`): two on-disk stores under `~/.jaato/memories/`. *Above* it sits the **session**, which calls its tools and runs its enrichment each turn. *Sideways*, it is driven like a cascade stage — curation is a **reactor** triggered off the authoring agent's `AgentCompletedEvent` (`16-lifecycle-and-events`), the same mechanism cascades use to chain stages. The curator's behavior is defined by a **persona/profile** (`08-personas`, `07-profiles`) that exposes the discoverable mutator tools.
+Memory is a **tool plugin** (`05-plugins`) that *also* subscribes to the prompt-enrichment pipeline. *Below* it is the workspace filesystem (`15-workspace`): the per-workspace stores live under `<workspace>/.jaato/memories/` (default), with a fixed global `~/.jaato/memories/` for cross-session knowledge shared by all agents. *Above* it sits the **session**, which calls its tools and runs its enrichment each turn. *Sideways*, the **curator is driven like a cascade stage** — triggered off the authoring agent's `AgentCompletedEvent` (`16-lifecycle-and-events`), the same mechanism cascades use to chain stages.
+
+**Important boundary — what ships vs. what is deployment glue.** The framework (and jaato-premium) ship the *substrate* only: the stores, the maturity model, the `store_memory`/`update_memory`/`delete_memory` tools, and the `signal_completion` → `AgentCompletedEvent` signal whose docstring is an explicit **forward-reference** to "downstream reactors (e.g. memory-advisor)" (`lifecycle_tools.py:6`). There is **no curator handler inside `jaato/` or `jaato_premium/`** — the curator is **deployment-authored** over the generic reactor/cascade engine. It is real and **runs in production** (the kb deployments operate it); it is simply not a shipped-in-package component. Two canonical shapes exist: the **simple `memory-advisor` reactor** (`jaato-knowledge-manager/.jaato.example/reactors/on_session_complete.py` spawns a `memory-advisor` profile session on completion, loop-guarded) and the **production `memory_curator` cascade stage** (in `jaato-based-kb-enablement-2.0/.jaato/`, with prefetch-wired review inputs, completion processors, a `cascade_after_memory_curator` handler, and action/contract-review ledgers).
 
 ## Responsibilities
 
@@ -43,7 +45,7 @@ The plugin subscribes to prompt enrichment at **priority 80** (late, so it sees 
 ## Lifecycle / flow
 
 1. **Author (raw write).** An agent calls `store_memory`; `_execute_store` builds `Memory(maturity=raw, source_agent=…)` and calls `MemoryStore.save()` → `RawStore.add()` writes `<base>/raw/{id}.json` atomically. **Not indexed** — it will not surface yet.
-2. **Trigger curation.** The authoring agent finishes; `signal_completion` emits `AgentCompletedEvent`, which the memory-advisor reactor consumes (`lifecycle_tools.py:1`).
+2. **Trigger curation.** The authoring agent finishes; `signal_completion` emits `AgentCompletedEvent` (`lifecycle_tools.py:6` forward-references "downstream reactors e.g. memory-advisor"). A **deployment-authored** reactor consumes it and spawns the curator — the `memory-advisor` profile session (simple example) or the `memory_curator` cascade stage (production).
 3. **Drain.** The curator lists the raw queue (`get_pending_curation` → `RawStore.list_all()`, tolerant of concurrent deletion).
 4. **Decide via `update_memory`:**
    - **validated** → upserted into curated, raw file unlinked; index rebuilt from curated.
@@ -52,15 +54,15 @@ The plugin subscribes to prompt enrichment at **priority 80** (late, so it sees 
    - **dismissed (curated)** → removed from the curated store.
 5. **Surface.** On future prompts/tool-results, priority-80 enrichment matches active curated memories and injects `retrieve_memories(ids=[…])`; the model fetches the bodies on demand.
 
-> **Design-vs-code note (flag it, don't smooth it over).** The design doc specifies dedicated `validate_memory` / `escalate_memory` tools and an `escalated_to` lineage field that would actually *create* a references entry. In the **current code** none of those symbols exist — escalation is performed by setting `maturity="escalated"` via `update_memory`, and the **enrichment-suppression** of escalated memories is wired, but the **reference-promotion bridge is aspirational**.
+> **Design-vs-code notes (flag them, don't smooth them over).** (1) **The curator is not shipped code.** A package-level search of `jaato/` and `jaato_premium/` finds zero memory-curation handlers — the curator is deployment-authored glue (the `memory-advisor` reactor example, or the production `memory_curator` cascade stage) over the generic reactor/cascade engine. It is real and running, but a reader should not expect to `import` it from the framework. (2) **Reference-promotion is aspirational.** The design doc specifies dedicated `validate_memory` / `escalate_memory` tools and an `escalated_to` lineage field that would actually *create* a references entry; in the **current code** none of those symbols exist — escalation is just `update_memory(maturity="escalated")`, and the **enrichment-suppression** of escalated memories is wired, but the **reference-promotion bridge is not**.
 
 ## Configuration / authoring
 
 ```yaml
 # profile.yaml — memory is opt-in per profile
-plugins: [memory, ...]      # only profiles listing memory get ~/.jaato/memories rw AppArmor grants
+plugins: [memory, ...]      # only profiles listing memory get the ~/.jaato/memories rw AppArmor grants
 ```
-On-disk layout (under `storage_path`, default `~/.jaato/memories/`):
+On-disk layout. The default `storage_path` is **workspace-relative** `.jaato/memories.jsonl` (`plugin.py:80`/`:239`), which the store remaps to a base dir `.jaato/memories/` (`storage.py:262`); a fixed **global** `~/.jaato/memories/` (from `~/.jaato/memories.jsonl`, `plugin.py:250`) holds cross-session knowledge and is the path the AppArmor profile grants. Both use the same raw/curated layout:
 ```text
 memories/
 ├── raw/                 # one JSON file per raw memory — contention-free authoring queue
@@ -71,11 +73,11 @@ memories/
 
 ## Relationship to neighboring components
 
-Memory is a tool + enrichment **plugin** (`05-plugins`); its priority-80 enrichment runs *after* the **references** plugin (priority 20) — which is exactly why escalated memories drop out of memory enrichment: their knowledge is meant to surface earlier, via references. Curation is **reactor-driven** off `AgentCompletedEvent` (`16-lifecycle-and-events`), the same completion mechanism that chains **cascades** (`09-cascades`). The curator's identity is a **persona/profile** (`08-personas`, `07-profiles`) exposing the discoverable `update_memory`/`delete_memory` tools; each memory is stamped with its authoring agent's `source_agent`/`source_session`.
+Memory is a tool + enrichment **plugin** (`05-plugins`); its priority-80 enrichment runs *after* the **references** plugin (priority 20) — which is exactly why escalated memories drop out of memory enrichment: their knowledge is meant to surface earlier, via references. Curation is **reactor-driven** off `AgentCompletedEvent` (`16-lifecycle-and-events`), the same completion mechanism that chains **cascades** (`09-cascades`) — and in the production deployment the curator literally *is* a cascade stage (`10-cascade-stages`), with prefetch-wired inputs (`12-prefetch-scripts`) and completion processors (`14-completion-processors`). The curator's identity is a **persona/profile** (`08-personas`, `07-profiles`, e.g. `memory-advisor.json`) exposing the discoverable `update_memory`/`delete_memory` tools; each memory is stamped with its authoring agent's `source_agent`/`source_session`.
 
 ## Example
 
-1. A `gen-references` agent explains an OAuth flow and calls `store_memory(description="OAuth2 PKCE flow", tags=["oauth_pkce_flow"], confidence=0.9)`. `_execute_store` writes `~/.jaato/memories/raw/mem_…json` with `maturity="raw"`, `source_agent="agent:gen-references"`. It is **not indexed** — no prompt surfaces it yet.
+1. A `gen-references` agent explains an OAuth flow and calls `store_memory(description="OAuth2 PKCE flow", tags=["oauth_pkce_flow"], confidence=0.9)`. `_execute_store` writes `<workspace>/.jaato/memories/raw/mem_…json` with `maturity="raw"`, `source_agent="agent:gen-references"`. It is **not indexed** — no prompt surfaces it yet.
 2. The agent signals completion → the memory-advisor reactor fires.
 3. The advisor lists raw, judges it valuable, and calls `update_memory(id=…, maturity="validated")`. `MemoryStore.update()` upserts it into `curated.jsonl` (atomic rewrite) and unlinks the raw file; the indexer rebuilds from curated.
 4. Next session, a prompt mentioning "oauth pkce flow" triggers priority-80 enrichment: `_enrich_text` matches the now-curated active memory and injects `retrieve_memories(ids=['mem_…'])`. The model fetches the body.
@@ -118,11 +120,11 @@ flowchart TD
 
 - **Layout:** Left→right pipeline with a curation gate in the middle. Authoring on the left, curator gate center, surfacing on the right.
 - **Boxes (authoring):** "any agent → store_memory()" → **"RawStore — raw/{id}.json (one file per memory, contention-free)"** (tinted red/quarantine) with a callout "born maturity=raw · NOT indexed · NEVER surfaced".
-- **Boxes (gate):** "agent signal_completion → AgentCompletedEvent" feeding **"memory-advisor / curator (reactor): get_pending_curation → update_memory"** (highlighted amber). A dashed "drain" arrow from RawStore into the curator. Three decision branches out: "validated → upsert curated + unlink raw", "escalated → upsert curated, STOP surfacing (references carries it)", "dismissed → unlink (discard)".
+- **Boxes (gate):** "agent signal_completion → AgentCompletedEvent" feeding **"memory-advisor / curator (reactor — deployment-authored, not shipped in-package): get_pending_curation → update_memory"** (highlighted amber). A dashed "drain" arrow from RawStore into the curator. Three decision branches out: "validated → upsert curated + unlink raw", "escalated → upsert curated, STOP surfacing (references carries it)", "dismissed → unlink (discard)".
 - **Boxes (surfacing):** **"CuratedStore — curated.jsonl (single-writer, atomic rewrite)"** (tinted green) → "MemoryIndexer (curated only, active_only)" → "enrichment priority 80: 💡 retrieve_memories(ids=[…])" → "future session — model fetches bodies on demand".
 - **Arrows:** solid pipeline arrows; dashed "drain" from RawStore to curator; three labeled branches from the curator.
 - **Emphasis:** The **raw (quarantine, never surfaced)** vs **curated (vetted, surfaced)** split, and the **curator reactor** as the gate between them. Show that raw is invisible to prompts and only curated reaches the model.
-- **Caption:** "Memory / The School: any agent authors raw (quarantined, never surfaced); a curator reactor drains and validates/escalates/dismisses; only active curated memories are indexed and hinted back into future prompts."
+- **Caption:** "Memory / The School: any agent authors raw (quarantined, never surfaced); a deployment-authored curator reactor drains and validates/escalates/dismisses; only active curated memories are indexed and hinted back into future prompts."
 
 ## Source references
 - `jaato/jaato-server/shared/plugins/memory/models.py:22` — maturity constants + `ACTIVE_MATURITIES`; `Memory.is_active` `:89`.
@@ -134,5 +136,8 @@ flowchart TD
 - `jaato/jaato-server/shared/plugins/memory/plugin.py:996` — `_execute_store` forces `maturity=raw`, routes to raw queue, skips index.
 - `jaato/jaato-server/shared/plugins/memory/plugin.py:739` — enrichment priority 80; index built from curated only `:244`.
 - `jaato/jaato-server/shared/plugins/memory/indexer.py:172` — `find_matches_in_text` with `active_only` maturity filter.
-- `jaato/jaato-server/shared/lifecycle_tools.py:1` — `signal_completion` → memory-advisor reactor trigger.
+- `jaato/jaato-server/shared/lifecycle_tools.py:6` — `signal_completion` docstring forward-references "downstream reactors (e.g. memory-advisor)"; `signal_completion` handling at `:839`/`:859`.
+- `jaato-knowledge-manager/.jaato.example/reactors/on_session_complete.py` — canonical **example** curator: spawns a `memory-advisor` profile session on completion (loop-guarded); profile at `.jaato.example/profiles/memory-advisor.json`.
+- `jaato-based-kb-enablement-2.0/.jaato/scripts/` — **production** `memory_curator` cascade stage: `prefetch/prefetch_memory_curator_inputs.py` (review inputs), `processors/memory_curator_contract_review_consistent.py` + `memory_curator_actions_real.py` (completion processors), `reactors/` cascade handlers + `cascade_state/memory_curator_*_ledger.json` (audit). *(Both deployment-authored — no curator ships in `jaato/`/`jaato_premium/`.)*
+- `jaato/jaato-server/shared/plugins/memory/plugin.py:80,:239,:250` / `storage.py:262` — storage path: default workspace-relative `.jaato/memories.jsonl` remapped to `.jaato/memories/`; global `~/.jaato/memories/`.
 - `jaato/jaato-server/shared/plugins/memory/tests/test_storage_layout.py:148` — confirms raw landing, validate→curated, dismiss-unlinks.
