@@ -46,14 +46,26 @@ post-process. Finally, **cascades** chain many agent sessions (**stages**) into 
 | 13 | **Cascades** | An async, reactor-driven chain of stages; a driver observes events and a `cascade_after`-style reactor fires the next stage | `jaato_premium/reactors/` + `docs/design/cascade-as-client.md` + deployment driver |
 | 14 | **Reactors** | Event→condition→action rules in the daemon; the engine that fires each stage transition | `jaato_premium/reactors/` |
 
-**Cross-cutting (two docs):** the **Workspace** (doc `15`) is not a single layer — it is the per-session
-working root that simultaneously scopes filesystem access, anchors each session's generated **AppArmor**
-profile (`jaato-ws-{session_id}`), and keys **warm-runner reuse**; its enforced profile is *composed*
-from a base/workspace rule set + per-plugin default fragments + cascade/profile custom fragments. The
-**Lifecycle & event protocol** (doc `16`) is the temporal spine — the ~110 typed SDK `Event` classes and
-the order they fire across a session's life (connect → turn → tool-call → completion → slot-return →
-teardown); it is what reactors and cascade drivers observe, and it is why a cascade hands off on
-`SlotSettledEvent` rather than `AgentCompletedEvent`.
+**Cross-cutting (docs 15–19):** these are not single layers — they span the stack. The **Workspace**
+(doc `15`) is the per-session working root that simultaneously scopes filesystem access, anchors each
+session's generated **AppArmor** profile (`jaato-ws-{session_id}`), and keys **warm-runner reuse**; its
+enforced profile is *composed* from a base/workspace rule set + per-plugin default fragments +
+cascade/profile custom fragments. The **Lifecycle & event protocol** (doc `16`) is the temporal spine —
+the ~110 typed SDK `Event` classes and the order they fire across a session's life (connect → turn →
+tool-call → completion → slot-return → teardown); it is what reactors and cascade drivers observe, and
+it is why a cascade hands off on `SlotSettledEvent` rather than `AgentCompletedEvent`. **Telemetry**
+(doc `17`) is the opt-in OpenTelemetry tracing layer that emits OpenInference spans to a backend like a
+self-hosted Arize Phoenix — free when off, a `session→agent→turn→llm/tool` span tree when on.
+**Redaction** (doc `18`) is the outbound data-protection chokepoint that scrubs span attributes and
+canonical history (homegrown and pluggable — *not* Presidio, but with the extension point where such a
+backend would plug in). **Secrets** (doc `19`) is the inbound mirror: `scheme://path#key` secret URIs
+resolved daemon-side by pluggable backends, per-provider auth plugins, and an `AuthAttempt` that records
+provenance but never the secret value.
+
+**Subsystem (doc 20):** **Memory / "The School"** (doc `20`) is the authoring-and-curation lifecycle — any
+agent writes **raw** memories (quarantined, never surfaced); a **curator** reactor drains and
+validates/escalates/dismisses them; only active curated memories are indexed and hinted back into future
+prompts.
 
 ## How a request flows (bottom→top, then back)
 
