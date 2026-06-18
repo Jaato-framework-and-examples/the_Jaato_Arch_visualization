@@ -33,7 +33,7 @@ A `@runtime_checkable` Protocol declaring lifecycle (`initialize`, `shutdown`, `
 `NullTelemetryPlugin` implements the whole protocol as no-ops, `enabled` hardwired `False`, every span manager yielding the singleton `_NOOP_SPAN`. This is what the runtime gets unless telemetry is explicitly turned on — so the common path imports no OTel and allocates nothing.
 
 ### The OTel implementation (`otel_plugin.py:337`)
-`OTelPlugin` lazy-imports the OTel SDK (`_ensure_imports`, `otel_plugin.py:43`) and maps jaato operations onto OpenInference span kinds — string constants `_OI_AGENT/_OI_LLM/_OI_TOOL/_OI_CHAIN` (`otel_plugin.py:36`). `begin_session` opens a `CHAIN` span and `begin_agent` an `AGENT` span beneath it (stored by key so children can parent off them); `turn_span` is an `AGENT` span that also sets `graph.node.*` for Phoenix's DAG view; `llm_span` is `LLM` (model name, token counts, finish reasons, cache outcome); `tool_span` is `TOOL` (name, id, input/output). Live spans use OTel's `start_as_current_span`, so the implicit context stack nests LLM/tool spans under the active turn.
+`OTelPlugin` lazy-imports the OTel SDK (`_ensure_imports`, `otel_plugin.py:43`) and maps jaato operations onto OpenInference span kinds — string constants `_OI_AGENT/_OI_LLM/_OI_TOOL/_OI_CHAIN` (`otel_plugin.py:37`). `begin_session` opens a `CHAIN` span and `begin_agent` an `AGENT` span beneath it (stored by key so children can parent off them); `turn_span` is an `AGENT` span that also sets `graph.node.*` for Phoenix's DAG view; `llm_span` is `LLM` (model name, token counts, finish reasons, `streaming` flag); `tool_span` is `TOOL` (name, id, `plugin_type`, input/output). Span **names are namespaced per agent** so multi-agent/cascade traces stay separable in Phoenix — `jaato.session.{session_id}`, `jaato.{session_id}.llm`, `jaato.tool.{tool_name}` — and every span is stamped with the daemon **session-manager id** (`_inject_daemon_session_id`, set in `begin_session`) for cross-span correlation, distinct from the bus plan/step thread-local below. Live spans use OTel's `start_as_current_span`, so the implicit context stack nests LLM/tool spans under the active turn.
 
 ### The exporter (`otel_plugin.py:487`)
 `_create_exporter` resolves `none` / `console` / `file` (OTLP-JSON lines) / `otlp`. The OTLP path **tries gRPC first** and **falls back to HTTP** on `ImportError`, reading endpoint and headers from `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. Spans flow through a `BatchSpanProcessor` (or `SimpleSpanProcessor`), optionally sampled by a `TraceIdRatioBased` sampler.
@@ -55,8 +55,8 @@ A `@runtime_checkable` Protocol declaring lifecycle (`initialize`, `shutdown`, `
 ## Configuration / authoring
 
 ```bash
-# Install the optional tracing deps
-pip install -r jaato-server/requirements-telemetry.txt
+# Install the optional tracing deps (repo-root file; or the jaato-server[telemetry] pip extra)
+pip install -r jaato/requirements-telemetry.txt
 
 # Turn it on and point it at a self-hosted Arize Phoenix (OTLP gRPC on :4317)
 export JAATO_TELEMETRY_ENABLED=true
@@ -124,13 +124,13 @@ flowchart TD
 - **Caption:** "Telemetry: an opt-in OpenInference tracing layer — off and free by default, or a session→agent→turn→llm/tool span tree exported to a self-hosted Arize Phoenix when enabled."
 
 ## Source references
-- `jaato/jaato-server/shared/plugins/telemetry/plugin.py:104` — `TelemetryPlugin` `@runtime_checkable` Protocol (lifecycle + six span factories); `SpanContext` at `:12`.
+- `jaato/jaato-server/shared/plugins/telemetry/plugin.py:105` — `TelemetryPlugin` `@runtime_checkable` Protocol (lifecycle + six span factories); `SpanContext` at `:12`.
 - `jaato/jaato-server/shared/plugins/telemetry/null_plugin.py:45` — `NullTelemetryPlugin` zero-overhead default; `_NOOP_SPAN` at `:42`.
-- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:36` — OpenInference span-kind constants (`AGENT/LLM/TOOL/CHAIN`); `OTelPlugin` at `:337`; lazy import `_ensure_imports` at `:43`.
-- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:487` — `_create_exporter` (gRPC-first, HTTP fallback at `:528`).
-- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:715` — `subscribe_to_bus` (plan/step context from the event bus).
+- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:37` — OpenInference span-kind constants (`AGENT/LLM/TOOL/CHAIN`); `OTelPlugin` at `:337`; lazy import `_ensure_imports` at `:43`.
+- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:487` — `_create_exporter` (gRPC try at `:529`, HTTP fallback at `:540`).
+- `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:631` — `begin_session` (`_inject_daemon_session_id`, per-agent span names); `subscribe_to_bus` (plan/step context from the event bus) at `:715`.
 - `jaato/jaato-server/shared/plugins/telemetry/__init__.py:46` — `create_plugin()` env-gated null-vs-OTel selection (`JAATO_TELEMETRY_ENABLED`).
-- `jaato/jaato-server/requirements-telemetry.txt:4` — optional `opentelemetry-*` dependency pins.
+- `jaato/requirements-telemetry.txt` — optional `opentelemetry-*` dependency pins (repo-root); same set as the `jaato-server[telemetry]` pip extra (`jaato/jaato-server/pyproject.toml:100`).
 - `jaato/jaato-server/shared/jaato_runtime.py:311` — runtime installs the plugin; `:320` subscribes it to the bus.
 - `jaato/jaato-server/shared/jaato_session.py:3554` — `turn_span` emit site (LLM `:4554`, tool `:5475`, gc `:3764`).
 - `jaato/jaato-server/shared/session_telemetry.py:28` — pure `response_to_openinference` mapper (history mapper `:61`, cache classifier `:107`).
