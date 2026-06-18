@@ -13,7 +13,7 @@ This repo contains only the documentation:
 the_Jaato_Arch_visualization/        # this repo
 ├── README.md            ← this index
 ├── TEMPLATE.md          ← the shared section structure + style spec every doc follows
-└── components/          ← the 17 standalone component docs (00 overview + 01–16)
+└── components/          ← the 21 standalone component docs (00 overview + 01–20)
 ```
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
@@ -46,6 +46,10 @@ kb-enablement-2.0/ PRIVATE — reference deployment: the production cascade (.ja
 | [14-completion-processors](components/14-completion-processors.md) | **Completion processors** | Post-processing of the validated completion payload |
 | [15-workspace](components/15-workspace.md) | **Workspace** *(cross-cutting)* | Per-session root scoping filesystem + AppArmor + warm-runner reuse |
 | [16-lifecycle-and-events](components/16-lifecycle-and-events.md) | **Lifecycle & events** *(cross-cutting)* | The ~110 SDK events and their temporal ordering across a session's life |
+| [17-telemetry](components/17-telemetry.md) | **Telemetry** *(cross-cutting)* | Opt-in OpenTelemetry → OpenInference spans to Arize Phoenix; null-default, zero-overhead |
+| [18-redaction](components/18-redaction.md) | **Anonymization** *(cross-cutting, premium)* | Presidio + NaCl pseudonymization wired at four seats (history · tools · output · telemetry) |
+| [19-secrets](components/19-secrets.md) | **Secrets** *(cross-cutting)* | `scheme://path#key` resolver plugins + `*_auth` family + leak-proof `AuthAttempt` |
+| [20-memory](components/20-memory.md) | **Memory** *(subsystem)* | "The School" — raw authoring + curator-driven validate/escalate/dismiss |
 
 ## Notes on accuracy
 
