@@ -68,12 +68,20 @@ agent writes **raw** memories (quarantined, never surfaced); a **curator** react
 validates/escalates/dismisses them; only active curated memories are indexed and hinted back into future
 prompts.
 
+**Cross-cutting (doc 21):** **Resilience — behavior-drift detection & steering** (doc `21`) is the
+anti-drift loop: the premium **drift monitor** reactor embeds the agent's reasoning against the active
+plan-step goal (`all-MiniLM-L6-v2` cosine; adaptive/static/trajectory flags) and nudges on drift; the
+**reliability** mechanism (its dead in-process plugin migrating to an event-driven reactor) detects
+behavioral drift (flaky-tool trust escalation, loop/stall/prerequisite patterns) and steers via a
+non-blocking nudge, with **presentation-aware enforcement** (interactive forced-prompt; headless async
+deny→notify→T3 approval-gate); **memory continuity scopes** (project/universal) persist intent across
+sessions; and the **tag/embedding** enrichers re-surface the right reference/memory mid-session.
+
 **Cross-cutting (doc 22):** **Gossip — daemon federation** (doc `22`) is the PREMIUM multi-server layer:
 independent jaato **daemons** discover each other from a `servers.json` peer list, exchange periodic
 **health heartbeats** (liveness `HEALTHY`/`DEGRADED`/`UNREACHABLE`), **delegate subagents to remote
 peers** (`spawn_subagent(server="gpu-box")`) on a **git-synced workspace**, and present one dashboard —
 all carried over the public SDK's `peer.*` events, behind mTLS/SSO. Inert without `servers.json`.
-*(Doc `21` — resilience / behavior-drift — is in refactor and will land separately.)*
 
 ## How a request flows (bottom→top, then back)
 
