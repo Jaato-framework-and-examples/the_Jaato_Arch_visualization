@@ -13,7 +13,7 @@ This repo contains only the documentation:
 the_Jaato_Arch_visualization/        # this repo
 ├── README.md            ← this index
 ├── TEMPLATE.md          ← the shared section structure + style spec every doc follows
-└── components/          ← the 21 standalone component docs (00 overview + 01–20)
+└── components/          ← the 22 standalone component docs (00 overview + 01–20 and 22; doc 21 — resilience/drift — is in refactor)
 ```
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
@@ -50,6 +50,8 @@ kb-enablement-2.0/ PRIVATE — reference deployment: the production cascade (.ja
 | [18-redaction](components/18-redaction.md) | **Anonymization** *(cross-cutting, premium)* | Presidio + NaCl pseudonymization wired at four seats (history · tools · output · telemetry) |
 | [19-secrets](components/19-secrets.md) | **Secrets** *(cross-cutting)* | `scheme://path#key` resolver plugins + `*_auth` family + leak-proof `AuthAttempt` |
 | [20-memory](components/20-memory.md) | **Memory** *(subsystem)* | "The School" — raw authoring + curator-driven validate/escalate/dismiss |
+| *21-resilience-drift* | *Resilience / drift (in refactor)* | *Behavior-drift detection & steering — landing separately after refactor* |
+| [22-gossip](components/22-gossip.md) | **Gossip / federation** *(cross-cutting, premium)* | Multi-daemon federation: peer heartbeat/liveness, remote subagent delegation, git workspace sync, dashboard |
 
 ## Notes on accuracy
 
