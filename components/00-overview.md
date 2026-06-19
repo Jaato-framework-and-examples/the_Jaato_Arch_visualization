@@ -68,6 +68,13 @@ agent writes **raw** memories (quarantined, never surfaced); a **curator** react
 validates/escalates/dismisses them; only active curated memories are indexed and hinted back into future
 prompts.
 
+**Cross-cutting (doc 22):** **Gossip — daemon federation** (doc `22`) is the PREMIUM multi-server layer:
+independent jaato **daemons** discover each other from a `servers.json` peer list, exchange periodic
+**health heartbeats** (liveness `HEALTHY`/`DEGRADED`/`UNREACHABLE`), **delegate subagents to remote
+peers** (`spawn_subagent(server="gpu-box")`) on a **git-synced workspace**, and present one dashboard —
+all carried over the public SDK's `peer.*` events, behind mTLS/SSO. Inert without `servers.json`.
+*(Doc `21` — resilience / behavior-drift — is in refactor and will land separately.)*
+
 ## How a request flows (bottom→top, then back)
 
 1. A client connects to the **daemon** and sends a message for a session.
