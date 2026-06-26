@@ -83,6 +83,15 @@ independent jaato **daemons** discover each other from a `servers.json` peer lis
 peers** (`spawn_subagent(server="gpu-box")`) on a **git-synced workspace**, and present one dashboard —
 all carried over the public SDK's `peer.*` events, behind mTLS/SSO. Inert without `servers.json`.
 
+**Tooling (doc 23):** **jaato-scaffold** (doc `23`) is the authoring CLI that sits *beside* the stack — it
+**introspects the installed framework build** (providers, plugins, GC, the profile schema, env, model
+tiers) and exposes three verbs over one core: **`explain`** (what does this build offer?), **`validate`**
+(check a hand-authored profile/set against it — reusing the framework's own `discover_profiles()`
+resolution so it checks the *effective* profile the daemon would build), and **`new`** (scaffold a
+profile-set or SDK-client archetype, then run it straight back through `validate` — valid by
+construction). Its reason to exist: turn the **silent-ignore** asset failures (a mistyped knob/plugin/
+provider dropped without a word at runtime) into loud, machine-coded errors.
+
 ## How a request flows (bottom→top, then back)
 
 1. A client connects to the **daemon** and sends a message for a session.
