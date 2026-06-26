@@ -110,12 +110,9 @@ provider dropped without a word at runtime) into loud, machine-coded errors.
   `spawn_payload_schema` and `completion_payload_schema` actually live. A *persona* is the identity,
   authored as Markdown under `.jaato/agents/<name>.md`; it reaches a profile's schemas via a
   `default_profile` reference. There is no `Persona` Python class.
-- **Cascades are reactor-driven — and are NOT "flows".** A cascade is an *asynchronous, event-reactive*
-  chain: each stage is a headless agent session, and a reactor rule (matching `agent.completed` with a
-  `where` on the prior stage's payload) spawns the next stage. Sessions in one cascade share a
-  `cascade_driver_id`. Do **not** confuse this with the premium `flow_runner` / `kind: Flow` /
-  `ScriptedFlowRunner` engine — that is a separate "flows" mechanism, slated to be dropped, and is
-  deliberately **not** documented in this pack.
+- **Cascades are reactor-driven.** A cascade is an *asynchronous, event-reactive* chain: each stage is a
+  headless agent session, and a reactor rule (matching `agent.completed` with a `where` on the prior
+  stage's payload) spawns the next stage. Sessions in one cascade share a `cascade_driver_id`.
 - **cascade-as-client is shipped (the design doc header is stale).** Promoting `cascade_driver_id` to a
   first-class observer client identity (`_cascade:{cid}`) is **implemented and tested** in jaato-server —
   the cascade-client registry (`_cascade_clients`, `session_manager.py:318`), `register_in_process_client`

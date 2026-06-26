@@ -38,7 +38,7 @@ kb-enablement-2.0/ PRIVATE — reference deployment: the production cascade (.ja
 | [06-model-providers](components/06-model-providers.md) | **Model providers** | Provider-agnostic protocol over every LLM backend |
 | [07-profiles](components/07-profiles.md) | **Profiles** | Declarative agent config (model/provider/plugins/GC/schemas) |
 | [08-personas](components/08-personas.md) | **Personas** | Agent identity as Markdown; persona vs profile |
-| [09-cascades](components/09-cascades.md) | **Cascades** | Multi-stage agent workflows (premium `flow_runner` / Flows) |
+| [09-cascades](components/09-cascades.md) | **Cascades** | Async, reactor-driven multi-stage agent workflows (headless sessions chained on completion events) |
 | [10-cascade-stages](components/10-cascade-stages.md) | **Cascade stages** | Anatomy of one stage; typed in/out boundaries |
 | [11-reactors](components/11-reactors.md) | **Reactors** | Event→condition→action rules in the daemon |
 | [12-prefetch-scripts](components/12-prefetch-scripts.md) | **Pre-fetch scripts** | Persona context-fetching at bootstrap (input boundary) |
@@ -61,7 +61,3 @@ anchors) and flags anything that is design-stage-only or not yet implemented. Tw
 keep in mind when reading: a **persona** is agent Markdown (not a class; the spawn/completion schemas
 live on the **profile**), and a **cascade** is an *asynchronous, reactor-driven* chain of headless agent
 sessions — each stage's `agent.completed` event triggers a reactor that spawns the next stage.
-
-> **Not documented here, on purpose:** the premium `flow_runner` / `kind: Flow` / `ScriptedFlowRunner`
-> engine ("flows") is a **separate mechanism from cascades** and is slated to be dropped — do not
-> conflate the two. These docs cover cascades (the reactor-driven model), not flows.
