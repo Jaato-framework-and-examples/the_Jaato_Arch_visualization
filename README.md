@@ -13,7 +13,7 @@ This repo contains only the documentation:
 the_Jaato_Arch_visualization/        # this repo
 ├── README.md            ← this index
 ├── TEMPLATE.md          ← the shared section structure + style spec every doc follows
-└── components/          ← the 23 standalone component docs (00 overview + 01–22)
+└── components/          ← the 24 standalone component docs (00 overview + 01–23)
 ```
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
@@ -52,6 +52,7 @@ kb-enablement-2.0/ PRIVATE — reference deployment: the production cascade (.ja
 | [20-memory](components/20-memory.md) | **Memory** *(subsystem)* | "The School" — raw authoring + curator-driven validate/escalate/dismiss |
 | [21-resilience-drift](components/21-resilience-drift.md) | **Resilience / drift** *(cross-cutting)* | Behavior-drift detection & steering: drift monitor, reliability reactor (migrating), continuity scopes, tag/embedding injection |
 | [22-gossip](components/22-gossip.md) | **Gossip / federation** *(cross-cutting, premium)* | Multi-daemon federation: peer heartbeat/liveness, remote subagent delegation, git workspace sync, dashboard |
+| [23-scaffold](components/23-scaffold.md) | **jaato-scaffold** *(tooling)* | Authoring CLI: `explain`/`validate`/`new` over an introspection core that reflects the installed framework; surfaces silent-ignore asset failures |
 
 ## Notes on accuracy
 
