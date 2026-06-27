@@ -1,7 +1,7 @@
 # Reactors
 
 > **Declarative event→condition→action rules that run inside the jaato daemon: they watch each session's event bus and, when a rule matches, fire a Python action script that can spawn sessions, hand off to other agents, inject prompts, post webhooks, or coordinate via gates.**
-> **Layer (bottom→top):** a top-tier reactive automation layer that sits *above* sessions and cascades — observing the events they emit and steering them in response · **Lives in:** PREMIUM `jaato-premium/jaato_premium/reactors/` (engine, rules, matcher, action_context, extension, installer, templating, watcher); docs in PUBLIC `jaato/docs/reactor-implementation.md` and `jaato/docs/reactor-tenant-guide.md`.
+> **Layer (bottom→top):** a top-tier reactive automation layer that sits *above* sessions and cascades — observing the events they emit and steering them in response · **Lives in:** PREMIUM `jaato-premium/jaato_premium/reactors/` (engine, rules, matcher, action_context, extension, gates, templating, watcher; plus opt-in reactor `examples/`); docs in PUBLIC `jaato/docs/reactor-implementation.md` and `jaato/docs/reactor-tenant-guide.md`.
 
 ## What it is
 
@@ -42,13 +42,13 @@ The `ActionContext` is what a reactor *can do*. Key methods (`jaato-premium/jaat
 ### HandoffGate
 A CAS-mutex + intent-metadata primitive solving producer-dedup, cross-reactor handoff, and external observability. `try_acquire(owner)` flips GREEN→RED; `announce(lease, intent)` emits `GateAnnouncedEvent`; `release(lease, outcome)` is idempotent. A built-in `GateAutoCompleter` releases on the spawned session's `agent.completed` when the intent carries `session_id`; a watchdog times out stuck gates; state persists atomically to `~/.jaato/handoff_gates.json` (`jaato-premium/jaato_premium/reactors/README.md:215-312`, `extension.py:157-168`).
 
-### Extension & installer
-`ReactorExtension.start()` writes an AppArmor fragment, installs premium-shipped reactors, constructs the gate registry, starts the watchdog + auto-completer, then starts the engine and registers its `on_session_ready` session hook (`extension.py:119-188`). `installer.py` discovers `jaato.premium_reactors` entry points and writes each `PremiumReactor` bundle idempotently to `~/.jaato/reactors/<name>.json` + `~/.jaato/scripts/<name>.py` (`installer.py:38-66`, `installer.py:139-171`).
+### Extension
+`ReactorExtension.start()` writes an AppArmor fragment, constructs the gate registry, starts the watchdog + auto-completer, then starts the engine and registers its `on_session_ready` session hook (`extension.py`). It **does not install any reactor config** — premium writes nothing to `~/.jaato/`. Premium reactors (drift_monitor, reliability) ship as **opt-in examples** under `jaato_premium/reactors/examples/` (premium `pyproject.toml:76`); a deployment opts in by copying an example into its `<workspace>/.jaato/` (a `reactors/<name>.json` rule + a thin `scripts/<name>.py` shim that imports the real logic from the premium package), and the engine **tier-discovers** it for that workspace (copy into `~/.jaato/` instead to run it globally). The legacy `installer.py` auto-install was removed.
 
 ## Lifecycle / flow
 
-1. Daemon starts → `ReactorExtension.start()` installs premium reactors, wires the gate registry, and starts the `ReactorEngine` (`extension.py:119-188`).
-2. Engine loads the **home tier** (`~/.jaato/reactors/*.json` fragments + `~/.jaato/reactors.json`) and starts a 2-second mtime poll watcher on the home single file (`engine.py:77-95`).
+1. Daemon starts → `ReactorExtension.start()` wires the gate registry (+ watchdog/auto-completer) and starts the `ReactorEngine` (`extension.py`) — it installs no reactor config.
+2. Engine loads the **home-tier** rules (`~/.jaato/reactors.json`, `engine.py:24`) and starts a 2-second mtime poll watcher on it (`engine.py:77-95`).
 3. On each new session, the engine merges home + workspace tiers, filters to enabled rules, and subscribes to the session's event bus (`engine.py:105-173`).
 4. A session emits an event → `_dispatch` builds the merged view, skips reactor-sourced and cascade-cancelled cases, then for each rule checks `event_type` and `where` (`engine.py:175-213`).
 5. On a match, the action is enqueued on the worker pool; `_run_action` resolves + loads the script (reloaded fresh every dispatch), substitutes params, and calls `execute(params, event, ctx)` (`engine.py:251-309`).
@@ -97,7 +97,7 @@ def execute(params, event, ctx):
 
 ## Example
 
-The premium **drift_monitor** reactor (`jaato-premium/jaato_premium/drift_monitor/reactor_logic.py`) ships via the `jaato.premium_reactors` entry point and matches `plan.step_updated`, `agent.output`, and `turn.completed`. `agent.output` chunks accumulate the model's reasoning text per session; `plan.step_updated` is the primary scoring trigger (it scores the buffer against the *outgoing* step before applying the transition); `turn.completed` is the fallback for multi-turn steps (`reactor_logic.py:105-181`). When a step's accumulated text scores low against its goal, `_flush_and_score` emits a `drift.measured` event via `ctx.emit_event` and, if flagged, calls `ctx.inject_prompt` with a deliberately conversational nudge ("Heads up — your last turn scored low against the active plan step…") so the live agent self-corrects rather than reading it as a refusal (`reactor_logic.py:69-75`, `reactor_logic.py:184-269`). Per-session `DriftState` survives the per-dispatch script reload by living in the importable module, not the deployed script body (`reactor_logic.py:1-37`, `reactor_logic.py:78-94`).
+The premium **drift_monitor** reactor (`jaato-premium/jaato_premium/drift_monitor/reactor_logic.py`) ships as an **opt-in example** (`jaato_premium/reactors/examples/drift_monitor/`, tier-discovered from a workspace's `.jaato/` — not auto-installed) and matches `plan.step_updated`, `agent.output`, and `turn.completed`. `agent.output` chunks accumulate the model's reasoning text per session; `plan.step_updated` is the primary scoring trigger (it scores the buffer against the *outgoing* step before applying the transition); `turn.completed` is the fallback for multi-turn steps (`reactor_logic.py:105-181`). When a step's accumulated text scores low against its goal, `_flush_and_score` emits a `drift.measured` event via `ctx.emit_event` and, if flagged, calls `ctx.inject_prompt` with a deliberately conversational nudge ("Heads up — your last turn scored low against the active plan step…") so the live agent self-corrects rather than reading it as a refusal (`reactor_logic.py:69-75`, `reactor_logic.py:184-269`). Per-session `DriftState` survives the per-dispatch script reload by living in the importable module, not the deployed script body (`reactor_logic.py:1-37`, `reactor_logic.py:78-94`).
 
 ## Diagram
 
@@ -159,6 +159,6 @@ flowchart LR
 - `jaato-premium/jaato_premium/reactors/engine.py:105-213` — session subscription, `_dispatch` matching, loop/cancel suppression, worker-pool submit.
 - `jaato-premium/jaato_premium/reactors/engine.py:251-313` — `_run_action`: script resolution, param substitution, ActionContext build, AppArmor wrap, exception swallowing.
 - `jaato-premium/jaato_premium/reactors/extension.py:101-233` — `ReactorExtension` lifecycle (registry, watchdog, engine, session hook) and cascade-as-client handler.
-- `jaato-premium/jaato_premium/reactors/installer.py:38-171` — `PremiumReactor` bundle + idempotent install of fragment + script via the `jaato.premium_reactors` entry point.
+- `jaato-premium/jaato_premium/reactors/examples/` — premium reactors (drift_monitor, reliability) ship as **opt-in examples**, NOT auto-installed (premium `pyproject.toml:76`); the engine tier-discovers a deployment's config: home `~/.jaato/reactors.json` (`engine.py:24`) + workspace `<ws>/.jaato/reactors.json` (`engine.py:168-170`), scripts resolved workspace→home via `resolve_script_path`.
 - `jaato-premium/jaato_premium/reactors/README.md:135-179` — ActionContext method table and cascade-as-client wiring.
 - `jaato-premium/jaato_premium/drift_monitor/reactor_logic.py:105-269` — concrete reactor: event routing, scoring, `emit_event`, and `inject_prompt` nudge.

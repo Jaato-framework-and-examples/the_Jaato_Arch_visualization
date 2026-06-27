@@ -31,7 +31,7 @@ These mechanisms sit *above* the session and observe its output. The **drift mon
 ## Key concepts & structure
 
 ### 1. Drift monitor — semantic distance from the plan-step goal (premium reactor)
-A **premium-shipped reactor**: the `jaato_premium.reactors` installer writes a rule fragment to `~/.jaato/reactors/drift_monitor.json` and a thin action shim to `~/.jaato/scripts/drift_monitor.py` at reactor-extension start (`ReactorExtension.start()`, idempotent); the real logic lives in `jaato_premium.drift_monitor.reactor_logic.handle_event`, kept alive in the import cache across the framework's per-dispatch script reload so per-session state survives between turns (`reactor_logic.py:105`; registered via the `jaato.premium_reactors` entry point, `registration.py:67`).
+A **premium-shipped reactor**, distributed as an **opt-in example** (`jaato_premium/reactors/examples/drift_monitor/` — a `reactors/drift_monitor.json` rule fragment + a thin `scripts/drift_monitor.py` shim). It is **not** auto-installed — premium writes nothing to `~/.jaato/`. A deployment opts a *workspace* in by copying the example into that workspace's `.jaato/` (`cp -r …/examples/drift_monitor/. <ws>/.jaato/`), and the reactor engine's **workspace-tier discovery** picks it up for that workspace only (copy into `~/.jaato/` instead to run it globally — a deliberate opt-in). The reactor *framework* loads via the `jaato.extensions` → `reactors` entry point (`pyproject.toml:72`). All real logic lives in the importable `jaato_premium.drift_monitor.reactor_logic.handle_event` (`reactor_logic.py:106`), kept alive in the import cache across the framework's per-dispatch script reload so per-session `DriftState` survives between turns — the shim only routes events to it.
 
 It scores from three event types (`reactor_logic.py` docstring): `agent.output` chunks **accumulate** the model's streaming reasoning into a per-session buffer; `plan.step_updated` is the **primary** scoring trigger — it scores the buffer against the **current** step's goal *before* applying the transition (agents routinely open and close several steps within one turn, so per-step scoring attributes reasoning to the right step); `turn.completed` is the fallback for multi-turn steps. Scoring (`_flush_and_score`, `reactor_logic.py:184`): embed the buffer (sentence-transformers `all-MiniLM-L6-v2`, `embeddings.py:14`), `cosine_similarity` to the step-goal embedding (`scoring.py:12`, `state.py:141`).
 
@@ -70,7 +70,8 @@ A semantic-drift episode, end to end:
 ## Configuration / authoring
 
 ```jsonc
-// Drift monitor: premium reactor, auto-installed; override the rule in ~/.jaato/reactors.json.
+// Drift monitor: premium reactor shipped as an OPT-IN example (NOT auto-installed).
+// Opt a workspace in: cp -r jaato_premium/reactors/examples/drift_monitor/. <ws>/.jaato/  (or ~/.jaato/ for global).
 // Thresholds (HARD_THRESHOLD 0.30, BASELINE_TURNS 3, DEVIATION_FACTOR 2.0, TRAJECTORY_WINDOW 3)
 // are framework constants — not configurable in v1.
 
@@ -140,10 +141,10 @@ flowchart TD
 - **Caption:** "Drift resilience: semantic (drift monitor) and behavioral (reliability) detectors plus in-session and cross-session intent anchors (references/memory) form a closed loop — detect the agent wandering from its plan, steer it back by writing intent into the context, and emit the drift signal to telemetry."
 
 ## Source references
-- `jaato-premium/jaato_premium/drift_monitor/reactor_logic.py:105` — `handle_event` (event routing); `_flush_and_score` `:184` (embed + score + detect + nudge); `_emit_drift_measured` `:226`; `_nudge` / `_DRIFT_NUDGE` `:249`/`:69`.
+- `jaato-premium/jaato_premium/drift_monitor/reactor_logic.py:106` — `handle_event` (event routing); `_flush_and_score` `:185` (embed + score + detect + nudge); `_emit_drift_measured` `:227`; `_nudge` / `_DRIFT_NUDGE` `:250`/`:70`.
 - `jaato-premium/jaato_premium/drift_monitor/state.py:149` — `DriftState.is_drifting` (adaptive / static / trajectory); thresholds `:45-48`; `score_text` `:141`; `complete_step`/`_check_strategic_drift` `:123`/`:261`.
 - `jaato-premium/jaato_premium/drift_monitor/scoring.py:12` — `cosine_similarity`; `compute_adaptive_baseline` `:25`; `detect_trajectory_decline` `:48`.
-- `jaato-premium/jaato_premium/drift_monitor/embeddings.py:14` — `MODEL_NAME = "all-MiniLM-L6-v2"`; `SentenceTransformerProvider` `:24`. Registration via `jaato.premium_reactors` (`registration.py:67`).
+- `jaato-premium/jaato_premium/drift_monitor/embeddings.py:14` — `MODEL_NAME = "all-MiniLM-L6-v2"`; `SentenceTransformerProvider` `:24`. Shipped as an **opt-in example** at `jaato_premium/reactors/examples/drift_monitor/` (not auto-installed — premium `pyproject.toml:76`); the reactor framework loads via `jaato.extensions → reactors` (`pyproject.toml:72`).
 - `jaato/jaato-server/shared/plugins/reliability/` — the public reliability **logic** the reactor reuses: `FailureKey`/`EscalationRule`/`TrustState` (`types.py:104`/`:349`/`:36`), `PatternDetector` (`patterns.py:26`). The in-process `ReliabilityPlugin` (`plugin.py:63`) is **dead** — its three activation seams (`configure_plugins(reliability_plugin=…)` `jaato_runtime.py:722`; `set_nudge_callbacks`; `wrap_permission_plugin` `plugin.py:3110`) are never called outside tests (daemon `core.py:2087` passes 3 args).
 - `jaato/jaato-sdk/jaato_sdk/event_bus.py:90` — `RELIABILITY_ESCALATED`/`RELIABILITY_PATTERN_DETECTED` bus event types (substrate, #318); `is_error_result` on `tool.call_completed` (`jaato-sdk/jaato_sdk/events.py:606`, #319).
 - `jaato-premium/jaato_premium/reliability/reactor_logic.py:57,64,125` — the shipped reliability reactor: `_nudge` (`inject_prompt`), `_on_escalation` (emit + write `reliability:escalated_tools`), `_park_for_approval` (`HandoffGate` for headless out-of-band approval); opt-in example at `jaato_premium/reactors/examples/reliability/` (premium #47).
