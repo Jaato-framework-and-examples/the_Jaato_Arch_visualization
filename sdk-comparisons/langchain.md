@@ -189,7 +189,7 @@ g.add_edge(START, "researcher"); g.add_edge("researcher", "writer")
 g.compile().invoke({"topic": "tide pools"})
 ```
 
-**jaato-sdk** — the supervisor's **persona** gives it a delegating *role* (its "soul" — how it behaves, **not** a task; jaato's analog of Mastra's `instructions`). The actual work arrives separately, as the **first prompt**. The delegation it triggers is **async + daemon-driven**, so the client drops to the event API. The persona:
+**jaato-sdk** — the supervisor's **persona** gives it a delegating *role* (its "soul" — how it behaves, **not** a task; the equivalent of the system prompt you'd give a LangGraph supervisor). The actual work arrives separately, as the **first prompt**. The delegation it triggers is **async + daemon-driven**, so the client drops to the event API. The persona:
 ```markdown
 <!-- .jaato/agents/lead.md — role & behaviour, NOT a task -->
 You are a coordinator. You get work done by delegating to specialist subagents
