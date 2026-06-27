@@ -24,6 +24,7 @@ Memory is a **tool plugin** (`05-plugins`) that *also* subscribes to the prompt-
 - Give the curator tools to review and re-classify (`update_memory`, `delete_memory`), implementing the maturity transitions.
 - Maintain the maturity lifecycle: `raw → validated → escalated`, with `↘ dismissed`.
 - Surface **only active** memories back into prompts (priority-80 enrichment), injecting compact ID hints, never full bodies.
+- Provide the **substrate for agent continuity** — scope-tagged summaries that resurface in later same-scope sessions; the `{{continuity_scope}}` authoring convention itself lives with the persona (`08-personas`).
 
 ## Key concepts & structure
 
@@ -41,6 +42,9 @@ Four state constants — `MATURITY_RAW`, `MATURITY_VALIDATED`, `MATURITY_ESCALAT
 
 ### Surfacing: enrichment + indexer (`plugin.py:739`, `indexer.py:172`)
 The plugin subscribes to prompt enrichment at **priority 80** (late, so it sees the fully-enriched prompt) and to tool-result enrichment at 80. Both funnel through `_enrich_text`, which queries `MemoryIndexer.find_matches_in_text(...)` (built from `load_curated()` only, `active_only=True`) and appends a compact "💡 Available Memories — retrieve_memories(ids=[…])" hint showing only id + description, never the body. A per-session `_surfaced_memory_ids` set dedups so the same hint isn't re-injected every tool call.
+
+### The continuity pattern (`{{continuity_scope}}`)
+The raw/curated lifecycle is the **substrate** for **agent continuity** — the *"this agent remembers prior runs in the same scope"* property — composed from existing primitives, **not a dedicated feature**. A stable scope-id (a repo slug, a ticket) is passed as an ordinary `{{param}}` and lands literally in the rendered prompt as `{{continuity_scope}}`; before completing, the agent calls `store_memory` to consolidate what it learned, **tagged with that scope**. Its completion fires the **curator** — the same `AgentCompletedEvent`-driven reactor that drains the raw queue (above) — which validates the summary into the curated store. On a *later* session whose prompt carries the same scope-id, the priority-80 enrichment **tag-coherently matches** it and surfaces the prior-run memory's `💡 Available Memories` hint, so the agent resumes where it left off. Because surfacing is **curated-only**, the loop closes *through* curation — exactly why curation is now reactor-automatic on completion rather than scheduled. The `{{continuity_scope}}` placeholder plus the store/retrieve **postamble** is an authoring convention the **persona** carries — see `08-personas` (**Responsibilities** → "Continuity scope") for that side; this doc owns the memory mechanics that close the loop. (Distinct from a memory's *storage* `scope` — `SCOPE_PROJECT`/`SCOPE_UNIVERSAL`, `21-resilience-drift` §3 — which routes *where* a memory is stored, not the continuity anchor.)
 
 ## Lifecycle / flow
 
