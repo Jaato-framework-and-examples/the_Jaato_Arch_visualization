@@ -9,7 +9,7 @@ The daemon is a real architectural difference — but with the **convenience fac
 
 > **Setup.** LangChain: `pip install langchain langchain-openai` (`langgraph` for the agent/HITL/durability examples). jaato-sdk: `pip install jaato-sdk` + a reachable daemon socket. The facade front door: `from jaato_sdk import IPCClient, IPCRecoveryClient, ask, AgentError, PermissionUnhandled`. All jaato calls are `async`. The LangChain snippets use current LCEL / `langchain_openai` / LangGraph idioms (the API churns across majors — see the caveat at the end).
 
-`IPCClient.session(...)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0` for a cold autostart). It forwards `profile` / `agent` / `agent_params` / `cascade_driver_id` straight to `create_session`, so **both** the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …}`) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` (so a plain turn never hangs) and **raise** on failure — `AgentError` on an error terminal, `PermissionUnhandled` if a gated tool goes unanswered — so there's no manual `if reason == "error"` bookkeeping.
+`IPCClient.session(...)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0` for a cold autostart). It forwards `profile` / `agent` / `agent_params` / `cascade_driver_id` straight to `create_session`, so **both** the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …}`) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` (so a plain turn never hangs) and **raise** on failure — `AgentError` on an error terminal, `PermissionUnhandled` if a gated tool goes unanswered — so there's no manual `if reason == "error"` bookkeeping. And the facade is **not all-or-nothing**: `s.client` exposes the underlying low-level client, so you can mix high-level `ask`/`complete`/`stream` with raw event-API calls — `s.client.subscribe(EventType.…)`, `s.client.cascade_events(...)`, `s.client.respond_to_permission(req_id, "e", edited_arguments={...})` (edit a tool's args before it runs) — on the **same session and connection** (listeners you add persist across turns). `ask`/`complete`/`stream` also take `attachments=[...]` for multimodal image/file inputs.
 
 ---
 
@@ -216,7 +216,7 @@ for prompt in ["Stage 1: extract.", "Stage 2: summarize."]:
         await s.complete(prompt)   # complete() waits SESSION_TERMINATED → slot settled before the next stage
 ```
 
-**Side by side.** A LangChain chain is synchronous data flow inside one process. A jaato cascade is a chain of **headless sessions** linked by completion events, reusing a pre-warmed runner slot (`cascade_driver_id`) so each stage skips cold-start — and in a real deployment the stage-to-stage handoff is **reactor-driven** (a reactor spawns the next stage on `slot.settled`), so stages are decoupled and observable. To *watch* a running cascade read-only, the low-level event iterator is the tool: `async for ev in client.cascade_events(cid, event_types=[...], role="observer"): ...`.
+**Side by side.** A LangChain chain is synchronous data flow inside one process. A jaato cascade is a chain of **headless sessions** linked by completion events, reusing a pre-warmed runner slot (`cascade_driver_id`) so each stage skips cold-start — and in a real deployment the stage-to-stage handoff is **reactor-driven** (a reactor spawns the next stage on `slot.settled`), so stages are decoupled and observable. To *watch* a running cascade read-only, use the low-level event iterator — `async for ev in client.cascade_events(cid, event_types=[...], role="observer"): ...` — which is the *same* surface the facade exposes as `s.client`, so you interleave it with `s.ask`/`s.complete` rather than choosing one or the other.
 
 ## 10. Production: persistence, recovery, observability
 
@@ -245,12 +245,12 @@ async with IPCRecoveryClient.session(
 
 | You want… | Reach for |
 |---|---|
-| One agent, minimal ceremony, in your process | **LangChain** (or any in-process library) |
+| A pure in-process library — nothing to run but Python (no daemon/server) | **LangChain** (or any in-process library) |
 | A huge integration/tool/RAG ecosystem | **LangChain** |
 | An explicit, inspectable, rewindable state graph | **LangGraph** |
 | Multi-tenant, isolated, self-hosted agents; built-in permissions / cascades / crash-recovery; local GPUs; typed completion gates | **jaato-sdk** (you're driving a platform, not importing a library) |
 
 **Honest caveats.**
 - **LangChain's API churns** across majors (LCEL, `langchain` 0.x→1.x, the LangGraph split). The snippets above use the current idioms as of early 2026; verify against the version you install.
-- **jaato-sdk needs a running daemon** (auto-started here). For one throwaway call that's a real dependency the in-process libraries don't have; for a fleet of isolated, recoverable agents it's the point. The facade keeps the common path to one `async with` — scaffold a known-good client with `jaato-scaffold new client` (see doc 23) for the low-level cases (e.g. the cascade observer).
+- **jaato-sdk needs a running daemon** (auto-started here). For one throwaway call that's a real dependency the in-process libraries don't have; for a fleet of isolated, recoverable agents it's the point. The facade keeps the common path to one `async with`, and `s.client` drops to the full low-level API on the same session when you need it (custom event routing, the cascade observer) — a front door, not a wall. Scaffold a known-good client with `jaato-scaffold new client` (see doc 23).
 - Apples-to-apples: both SDKs also ship **TypeScript** (`jaato-sdk-ts`, LangChain JS); these examples are Python for parity.
