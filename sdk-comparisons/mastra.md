@@ -202,14 +202,17 @@ const supervisor = new Agent({
 console.log((await supervisor.generate("Write a blurb about tide pools.")).text);
 ```
 
-**jaato-sdk** — each agent is its own isolated session; compose by passing output:
+**jaato-sdk** — a **supervisor** persona delegates to specialists via the `subagent` plugin:
 ```ts
-import { ask } from "@jaato/sdk";
-const notes = await ask("Research tide pools; return bullet notes.", { url, agent: "researcher", profile: { model: "gpt-4o", provider: "openai" } });
-const draft = await ask(`Write a blurb from these notes:\n${notes}`, { url, agent: "writer", profile: { model: "gpt-4o", provider: "openai" } });
+// the "lead" persona enables the subagent plugin; it hands off to specialist personas
+await using s = await JaatoClient.session({ url, agent: "lead",
+  profile: { model: "gpt-4o", provider: "openai", plugins: ["subagent"] } });
+console.log(await s.ask("Research tide pools, then write a blurb."));
+// 'lead' calls spawn_subagent({ agent: "researcher", task: … }) then spawn_subagent({ agent: "writer", task: … })
+// server-side — each subagent runs in its own context and returns its result to the parent
 ```
 
-**Side by side.** Mastra's supervisor keeps one lead agent in control, delegating to sub-agents (declared on `agents`) as needed — all in your process. jaato gives each agent an **isolated session** (own runner, own plugins/persona); you compose them by passing output between calls — or one agent spawns **subagents** server-side via the `subagent` plugin. (Note: Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.)
+**Side by side.** Both are true **delegation** — one lead agent in control, deciding when to hand off. Mastra's supervisor declares sub-agents on its `agents` property and runs them in your process; jaato's lead agent delegates via the **`subagent` plugin**: `spawn_subagent(agent=…, task=…)` runs each specialist **server-side** — sharing the parent's runner by default, or its own **isolated runner + cgroup** (`agent_params={"isolated": true}`) — then returns to the parent. (You can also orchestrate from the *client* instead — separate sessions passing output — when you want to own the control flow. Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.)
 
 ## 9. Multi-stage pipeline (workflow vs cascade)
 

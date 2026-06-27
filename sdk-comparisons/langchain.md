@@ -189,16 +189,17 @@ g.add_edge(START, "researcher"); g.add_edge("researcher", "writer")
 g.compile().invoke({"topic": "tide pools"})
 ```
 
-**jaato-sdk** — each agent is its own isolated session; compose by passing output:
+**jaato-sdk** — a **supervisor** persona delegates to specialists via the `subagent` plugin:
 ```python
-from jaato_sdk import ask
-notes = await ask("Research tide pools; return bullet notes.",
-                  agent="researcher", profile={"model": "gpt-4o", "provider": "openai"})
-draft = await ask(f"Write a blurb from these notes:\n{notes}",
-                  agent="writer", profile={"model": "gpt-4o", "provider": "openai"})
+# the "lead" persona enables the subagent plugin; it hands off to specialist personas
+async with IPCClient.session(agent="lead",
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": ["subagent"]}) as s:
+    print(await s.ask("Research tide pools, then write a blurb."))
+# 'lead' calls spawn_subagent(agent="researcher", task=…) then spawn_subagent(agent="writer", task=…)
+# server-side — each subagent runs in its own context and returns its result to the parent
 ```
 
-**Side by side.** LangGraph makes the multi-agent graph explicit and inspectable (nodes + edges). jaato-sdk gives each agent an **isolated session** (own runner, own plugins/persona); you compose them by passing output between calls — or a single agent spawns **subagents** server-side via the `subagent` plugin. (Two `ask()` calls = two daemon connects; for many turns use the `IPCClient.session` context manager and reuse `s`.)
+**Side by side.** Both are true **delegation** — one lead agent decides when to hand off and to whom. LangGraph makes the topology an explicit graph (nodes + edges) running in your process; jaato's lead agent delegates via the **`subagent` plugin**: it calls `spawn_subagent(agent=…, task=…)`, and each specialist runs **server-side** — sharing the parent's runner by default, or its own **isolated runner + cgroup** (`agent_params={"isolated": True}`) — then returns to the parent. (You can also skip the supervisor and orchestrate from the *client* — separate `ask()` calls passing output — when you want to own the control flow yourself.)
 
 ## 9. Multi-stage pipeline (chain vs cascade)
 
