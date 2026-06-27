@@ -202,17 +202,25 @@ const supervisor = new Agent({
 console.log((await supervisor.generate("Write a blurb about tide pools.")).text);
 ```
 
-**jaato-sdk** — a **supervisor** persona delegates to specialists via the `subagent` plugin:
+**jaato-sdk** — a **supervisor** persona delegates via the `subagent` plugin; delegation is **async + daemon-driven**, so this one drops to the event API:
 ```ts
-// the "lead" persona enables the subagent plugin; it hands off to specialist personas
+import { JaatoClient, EventTypeValue } from "@jaato/sdk";
+
+// The "lead" persona delegates via spawn_subagent, ENDS its turn after spawning, and
+// calls signal_completion once the subagents have returned and it has composed the answer.
 await using s = await JaatoClient.session({ url, agent: "lead",
   profile: { model: "gpt-4o", provider: "openai", plugins: ["subagent"] } });
-console.log(await s.ask("Research tide pools, then write a blurb."));
-// 'lead' calls spawn_subagent({ agent: "researcher", task: … }) then spawn_subagent({ agent: "writer", task: … })
-// server-side — each subagent runs in its own context and returns its result to the parent
+const out: string[] = [];
+s.client.subscribe(EventTypeValue.AGENT_OUTPUT, (e) => { if (e.text) out.push(e.text); });
+await new Promise<void>((resolve) => {
+  s.client.subscribeOnce(EventTypeValue.SESSION_TERMINATED, () => resolve());   // NOT turn.completed
+  s.client.sendMessage("Research tide pools, then write a blurb from the findings.");
+});
+// the daemon auto-continues 'lead' as each subagent COMPLETES; resolves only when 'lead' signal_completion's
+console.log(out.join(""));
 ```
 
-**Side by side.** Both are true **delegation** — one lead agent in control, deciding when to hand off. Mastra's supervisor declares sub-agents on its `agents` property and runs them in your process; jaato's lead agent delegates via the **`subagent` plugin**: `spawn_subagent(agent=…, task=…)` runs each specialist **server-side** — sharing the parent's runner by default, or its own **isolated runner + cgroup** (`agent_params={"isolated": true}`) — then returns to the parent. (You can also orchestrate from the *client* instead — separate sessions passing output — when you want to own the control flow. Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.)
+**Side by side.** Both are true **delegation** — one lead in control. But Mastra's supervisor runs **in your process**, `supervisor.generate(...)` blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(agent=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event the **daemon uses to auto-continue the lead** until it composes and `signal_completion`s. Spanning many turns, this is the one example that uses the **event API** — the facade's `ask`/`complete`/`stream` return on the first `TURN_COMPLETED` (the spawn turn), so you await the final `SESSION_TERMINATED` on `s.client`. (Personas live in `.jaato/agents/`; the lead must be **completion-gated**. Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.)
 
 ## 9. Multi-stage pipeline (workflow vs cascade)
 

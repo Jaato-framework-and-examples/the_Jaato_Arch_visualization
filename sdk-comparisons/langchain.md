@@ -189,17 +189,25 @@ g.add_edge(START, "researcher"); g.add_edge("researcher", "writer")
 g.compile().invoke({"topic": "tide pools"})
 ```
 
-**jaato-sdk** — a **supervisor** persona delegates to specialists via the `subagent` plugin:
+**jaato-sdk** — a **supervisor** persona delegates via the `subagent` plugin; delegation is **async + daemon-driven**, so this one drops to the event API:
 ```python
-# the "lead" persona enables the subagent plugin; it hands off to specialist personas
+import asyncio
+from jaato_sdk import IPCClient, EventType
+
+# The "lead" persona delegates via spawn_subagent, ENDS its turn after spawning, and
+# calls signal_completion once the subagents have returned and it has composed the answer.
 async with IPCClient.session(agent="lead",
         profile={"model": "gpt-4o", "provider": "openai", "plugins": ["subagent"]}) as s:
-    print(await s.ask("Research tide pools, then write a blurb."))
-# 'lead' calls spawn_subagent(agent="researcher", task=…) then spawn_subagent(agent="writer", task=…)
-# server-side — each subagent runs in its own context and returns its result to the parent
+    done, out = asyncio.Event(), []
+    s.client.subscribe(EventType.AGENT_OUTPUT, lambda e: out.append(getattr(e, "text", "")))
+    s.client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: done.set())   # NOT turn.completed
+    await s.client.send_message("Research tide pools, then write a blurb from the findings.")
+    await done.wait()   # the daemon auto-continues 'lead' as each subagent COMPLETES;
+                        # resolves only when 'lead' signal_completion's (the true end)
+    print("".join(out))
 ```
 
-**Side by side.** Both are true **delegation** — one lead agent decides when to hand off and to whom. LangGraph makes the topology an explicit graph (nodes + edges) running in your process; jaato's lead agent delegates via the **`subagent` plugin**: it calls `spawn_subagent(agent=…, task=…)`, and each specialist runs **server-side** — sharing the parent's runner by default, or its own **isolated runner + cgroup** (`agent_params={"isolated": True}`) — then returns to the parent. (You can also skip the supervisor and orchestrate from the *client* — separate `ask()` calls passing output — when you want to own the control flow yourself.)
+**Side by side.** Both are true **delegation** — one lead agent decides when to hand off. But the execution models differ sharply. LangGraph runs the supervisor graph **in your process**, blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(agent=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event that **the daemon uses to auto-continue the lead** on a later turn, until the lead composes and `signal_completion`s. Because that spans many turns, this is the one example that uses the **event API**: the facade's `ask`/`complete`/`stream` all return on the first `TURN_COMPLETED` (the spawn turn), so you wait on `s.client` for the final `SESSION_TERMINATED`. (The `lead`/`researcher`/`writer` personas live in `.jaato/agents/`, and the lead must be **completion-gated**. You can also orchestrate from the *client* instead — separate `ask()` calls passing output — when you'd rather own the control flow.)
 
 ## 9. Multi-stage pipeline (chain vs cascade)
 
