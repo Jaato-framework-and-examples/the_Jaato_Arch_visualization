@@ -20,11 +20,18 @@ the_Jaato_Arch_visualization/        # this repo
 ## SDK comparisons
 
 A separate genre from the architecture docs above: **side-by-side, example-driven** SDK-usage
-comparisons of jaato-sdk against other agent frameworks (10 examples, simplest → most complex).
+comparisons of jaato-sdk against other agent frameworks (10 examples each, simplest → most complex).
+A growing series — this first iteration covers LangChain; the rest are planned:
 
-| Doc | Compares |
-|-----|----------|
-| [langchain](sdk-comparisons/langchain.md) | **jaato-sdk vs LangChain** (Python) — hello-world → streaming → typed output → tools → agent loop → human-in-the-loop → multi-agent → cascade → production/recovery |
+| Framework | Status | Doc |
+|-----------|--------|-----|
+| **LangChain / LangGraph** | ✅ available | [langchain](sdk-comparisons/langchain.md) — hello-world → streaming → typed output → tools → agent loop → HITL → multi-agent → cascade → production/recovery |
+| **Mastra** | planned | — |
+| **Pydantic AI** | planned | — |
+| **Agno** | planned | — |
+| **Strands** | planned | — |
+| **OpenAI Agents SDK** | planned | — |
+| **Claude Agent SDK** | planned | — |
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
 **git-ignored — not part of this repo** (two are private):
