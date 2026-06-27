@@ -184,11 +184,12 @@ async with IPCClient.session(
 ```python
 from langgraph_supervisor import create_supervisor
 from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
 
 researcher = create_react_agent("openai:gpt-4o", tools=[web_search], name="researcher", prompt="Research topics.")
 writer     = create_react_agent("openai:gpt-4o", tools=[], name="writer", prompt="Write blurbs.")
 supervisor = create_supervisor(
-    [researcher, writer], model="openai:gpt-4o",
+    [researcher, writer], model=ChatOpenAI(model="gpt-4o"),
     prompt="You manage a researcher and a writer. Delegate to each as the task needs.",
 ).compile()
 supervisor.invoke({"messages": [("user", "Write a blurb about tide pools.")]})   # supervisor routes via handoff tools
