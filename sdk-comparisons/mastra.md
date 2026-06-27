@@ -1,11 +1,11 @@
 # SDK usage, side by side: **Mastra** vs **jaato-sdk**
 
-Ten worked examples, simplest first, each shown in **Mastra** and **jaato-sdk** — both in **TypeScript** this time (Mastra is TS-native, and jaato ships `@jaato/sdk`), so it's true same-language parity. As with the [LangChain comparison](langchain.md), the point is to make the *shape* of each SDK visible, because they sit in different categories:
+Ten worked examples, simplest first, each shown in **Mastra** and **jaato-sdk** — both in **TypeScript** (Mastra is TS-native, and jaato ships `@jaato/sdk`). The point is to make the *shape* of each SDK visible, because they sit in different categories:
 
 - **Mastra** is a **batteries-included TypeScript framework**: you define agents, tools, workflows, and memory in your own codebase and run them in your Node process or server (`mastra dev` in development, Mastra Cloud / any Node runtime in production). Built on the **Vercel AI SDK**, it ships memory, RAG, evals, observability, and a local playground. Your agent code *is* the app.
 - **jaato-sdk** is an **async client to a long-lived daemon**: agents run **server-side as isolated, permission-gated, per-session subprocesses**; your code is a thin client that opens a **session** and `ask`s. The agent loop, tools, isolation, persistence, and permissions live in the daemon, not your process.
 
-So unlike the LangChain comparison (a pure in-process library vs a daemon client), here *both* sides have a "server" story — but a different one. Mastra's server runs **your** agent code as a Node app; jaato's daemon runs agents as **isolated subprocesses you connect to**. That shapes the trade: Mastra gives you one type-safe codebase with the whole toolkit in-process; jaato gives you runtime/provider-agnostic, multi-tenant, recoverable agents behind a boundary. Read it as a trade, not a scoreboard.
+*Both* sides have a "server" story — but a different one. Mastra's server runs **your** agent code as a Node app; jaato's daemon runs agents as **isolated subprocesses you connect to**. That shapes the trade: Mastra gives you one type-safe codebase with the whole toolkit in-process; jaato gives you runtime/provider-agnostic, multi-tenant, recoverable agents behind a boundary. Read it as a trade, not a scoreboard.
 
 > **Setup.** Mastra: `npm i @mastra/core @ai-sdk/openai zod` (+ `@mastra/memory @mastra/libsql` for memory). jaato-sdk: `npm i @jaato/sdk` + a reachable daemon (`wss://…`). The facade front door: `import { JaatoClient, ask, AgentError, PermissionUnhandled } from "@jaato/sdk"`. The jaato `Session` is an **`AsyncDisposable`**, so the idiomatic form is `await using` (Node 20.4+ / TS 5.2+; add `ESNext.Disposable` to your tsconfig `lib`) — an explicit `await s.close()` works on older runtimes.
 
@@ -290,7 +290,7 @@ console.log(await s.ask("Long task…"));                      // survives a dae
 | Multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / cascades / crash-recovery; provider- and runtime-agnostic (local GPUs); typed completion gates; a thin client with bounded per-agent memory | **jaato-sdk** |
 
 **Honest caveats.**
-- Both are TypeScript here, so this is real same-language parity (no "Python for both" asterisk).
+- Both sides are TypeScript, so these examples are a genuine same-language comparison.
 - **Mastra's API is still moving** — v1.0 landed January 2026, and there are legacy methods (`generateLegacy`/`streamLegacy`, the deprecated `AgentNetwork`) and v1-beta docs in circulation. The snippets use the current v1 surface; verify exact signatures (especially the workflow run/`resume` and `stream` options) against the version you install.
 - **jaato-sdk needs a running daemon** and a WS endpoint (`wss://…` + token); it doesn't autostart one (unlike the Python SDK's local-IPC autostart). For a single throwaway script that's a real dependency; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The `await using` facade needs Node 20.4+ / TS 5.2+ (explicit `close()` otherwise).
 - Different runtime models: Mastra runs **your** agent code (and tools) in your Node process/server; jaato runs agents as **isolated subprocesses** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app.
