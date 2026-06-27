@@ -202,14 +202,30 @@ const supervisor = new Agent({
 console.log((await supervisor.generate("Write a blurb about tide pools.")).text);
 ```
 
-**jaato-sdk** — each agent is its own isolated session; compose by passing output:
+**jaato-sdk** — the supervisor's **persona** gives it a delegating *role* (its "soul" — how it behaves, **not** a task; jaato's analog of Mastra's `instructions`). The actual work arrives separately, as the **first prompt** (like Mastra's `generate(...)` argument). The delegation it triggers is **async + daemon-driven**, so the client drops to the event API. The persona:
+```markdown
+<!-- .jaato/agents/lead.md — role & behaviour, NOT a task -->
+You are a coordinator. You get work done by delegating to specialist subagents
+rather than doing it yourself: break the request into pieces, hand each to the
+right specialist, and synthesise their results into the final answer.
+```
+The client opens the session and sends the **task** as the first prompt — the persona's role plus the `subagent` tools turn it into delegation:
 ```ts
-import { ask } from "@jaato/sdk";
-const notes = await ask("Research tide pools; return bullet notes.", { url, agent: "researcher", profile: { model: "gpt-4o", provider: "openai" } });
-const draft = await ask(`Write a blurb from these notes:\n${notes}`, { url, agent: "writer", profile: { model: "gpt-4o", provider: "openai" } });
+import { JaatoClient, EventTypeValue } from "@jaato/sdk";
+
+await using s = await JaatoClient.session({ url, agent: "lead",
+  profile: { model: "gpt-4o", provider: "openai", plugins: ["subagent"] } });
+const out: string[] = [];
+s.client.subscribe(EventTypeValue.AGENT_OUTPUT, (e) => { if (e.text) out.push(e.text); });
+await new Promise<void>((resolve) => {
+  s.client.subscribeOnce(EventTypeValue.SESSION_TERMINATED, () => resolve());   // NOT turn.completed
+  void s.client.sendMessage("Research tide pools, then write a blurb from the findings.");
+});
+// the daemon auto-continues 'lead' as each subagent COMPLETES; resolves only when 'lead' signal_completion's
+console.log(out.join(""));
 ```
 
-**Side by side.** Mastra's supervisor keeps one lead agent in control, delegating to sub-agents (declared on `agents`) as needed — all in your process. jaato gives each agent an **isolated session** (own runner, own plugins/persona); you compose them by passing output between calls — or one agent spawns **subagents** server-side via the `subagent` plugin. (Note: Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.)
+**Side by side.** Both are true **delegation** — one lead in control. But Mastra's supervisor runs **in your process**, `supervisor.generate(...)` blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event the **daemon uses to auto-continue the lead** until it composes and `signal_completion`s. Spanning many turns, this is the one example that uses the **event API** — the facade's `ask`/`complete`/`stream` return on the first `TURN_COMPLETED` (the spawn turn), so you await the final `SESSION_TERMINATED` on `s.client`. (Personas live in `.jaato/agents/`; the lead must be **completion-gated**. Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.) **How the lead knows to delegate, and to whom:** three inputs combine — the **persona** gives it the *role* (a coordinator that delegates rather than working directly; ≈ Mastra's `instructions`), the **first prompt** carries the *task* (≈ Mastra's `generate(...)` argument), and the **`subagent` plugin** supplies the *means + targets*: the lead calls `list_subagent_profiles` to read each profile's name + description, then `spawn_subagent(profile="researcher", task=…)`. That `list_subagent_profiles` registry is jaato's analog of Mastra's `agents:{}` declaration (where the model sees each sub-agent's `description`) — except jaato *discovers* the profiles from `.jaato/profiles/` rather than declaring them inline. (The `agent=` persona axis is a *separate*, non-discovered selector.)
 
 ## 9. Multi-stage pipeline (workflow vs cascade)
 

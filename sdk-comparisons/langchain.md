@@ -189,16 +189,30 @@ g.add_edge(START, "researcher"); g.add_edge("researcher", "writer")
 g.compile().invoke({"topic": "tide pools"})
 ```
 
-**jaato-sdk** — each agent is its own isolated session; compose by passing output:
+**jaato-sdk** — the supervisor's **persona** gives it a delegating *role* (its "soul" — how it behaves, **not** a task; jaato's analog of Mastra's `instructions`). The actual work arrives separately, as the **first prompt**. The delegation it triggers is **async + daemon-driven**, so the client drops to the event API. The persona:
+```markdown
+<!-- .jaato/agents/lead.md — role & behaviour, NOT a task -->
+You are a coordinator. You get work done by delegating to specialist subagents
+rather than doing it yourself: break the request into pieces, hand each to the
+right specialist, and synthesise their results into the final answer.
+```
+The client opens the session and sends the **task** as the first prompt — the persona's role plus the `subagent` tools turn it into delegation:
 ```python
-from jaato_sdk import ask
-notes = await ask("Research tide pools; return bullet notes.",
-                  agent="researcher", profile={"model": "gpt-4o", "provider": "openai"})
-draft = await ask(f"Write a blurb from these notes:\n{notes}",
-                  agent="writer", profile={"model": "gpt-4o", "provider": "openai"})
+import asyncio
+from jaato_sdk import IPCClient, EventType
+
+async with IPCClient.session(agent="lead",
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": ["subagent"]}) as s:
+    done, out = asyncio.Event(), []
+    s.client.subscribe(EventType.AGENT_OUTPUT, lambda e: out.append(getattr(e, "text", "")))
+    s.client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: done.set())   # NOT turn.completed
+    await s.client.send_message("Research tide pools, then write a blurb from the findings.")
+    await done.wait()   # the daemon auto-continues 'lead' as each subagent COMPLETES;
+                        # resolves only when 'lead' signal_completion's (the true end)
+    print("".join(out))
 ```
 
-**Side by side.** LangGraph makes the multi-agent graph explicit and inspectable (nodes + edges). jaato-sdk gives each agent an **isolated session** (own runner, own plugins/persona); you compose them by passing output between calls — or a single agent spawns **subagents** server-side via the `subagent` plugin. (Two `ask()` calls = two daemon connects; for many turns use the `IPCClient.session` context manager and reuse `s`.)
+**Side by side.** Both are true **delegation** — one lead agent decides when to hand off. But the execution models differ sharply. LangGraph runs the supervisor graph **in your process**, blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event that **the daemon uses to auto-continue the lead** on a later turn, until the lead composes and `signal_completion`s. Because that spans many turns, this is the one example that uses the **event API**: the facade's `ask`/`complete`/`stream` all return on the first `TURN_COMPLETED` (the spawn turn), so you wait on `s.client` for the final `SESSION_TERMINATED`. (The `lead`/`researcher`/`writer` personas live in `.jaato/agents/`, and the lead must be **completion-gated**. You can also orchestrate from the *client* instead — separate `ask()` calls passing output — when you'd rather own the control flow.) **How the lead knows to delegate, and to whom:** three inputs combine — the **persona** gives it the *role* (a coordinator that delegates rather than working directly), the **first prompt** carries the *task*, and the **`subagent` plugin** supplies the *means + targets*: the lead calls `list_subagent_profiles` (jaato's analog of a declared agent registry, discovered from `.jaato/profiles/`) to read each profile's name + description, then `spawn_subagent(profile="researcher", task=…)`. (The `agent=` persona axis is a *separate*, non-discovered selector. LangGraph instead bakes the role + routing into the graph you wire.)
 
 ## 9. Multi-stage pipeline (chain vs cascade)
 
