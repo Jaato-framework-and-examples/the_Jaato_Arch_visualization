@@ -214,13 +214,13 @@ const out: string[] = [];
 s.client.subscribe(EventTypeValue.AGENT_OUTPUT, (e) => { if (e.text) out.push(e.text); });
 await new Promise<void>((resolve) => {
   s.client.subscribeOnce(EventTypeValue.SESSION_TERMINATED, () => resolve());   // NOT turn.completed
-  s.client.sendMessage("Research tide pools, then write a blurb from the findings.");
+  void s.client.sendMessage("Research tide pools, then write a blurb from the findings.");
 });
 // the daemon auto-continues 'lead' as each subagent COMPLETES; resolves only when 'lead' signal_completion's
 console.log(out.join(""));
 ```
 
-**Side by side.** Both are true **delegation** — one lead in control. But Mastra's supervisor runs **in your process**, `supervisor.generate(...)` blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(agent=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event the **daemon uses to auto-continue the lead** until it composes and `signal_completion`s. Spanning many turns, this is the one example that uses the **event API** — the facade's `ask`/`complete`/`stream` return on the first `TURN_COMPLETED` (the spawn turn), so you await the final `SESSION_TERMINATED` on `s.client`. (Personas live in `.jaato/agents/`; the lead must be **completion-gated**. Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.)
+**Side by side.** Both are true **delegation** — one lead in control. But Mastra's supervisor runs **in your process**, `supervisor.generate(...)` blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(agent=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event the **daemon uses to auto-continue the lead** until it composes and `signal_completion`s. Spanning many turns, this is the one example that uses the **event API** — the facade's `ask`/`complete`/`stream` return on the first `TURN_COMPLETED` (the spawn turn), so you await the final `SESSION_TERMINATED` on `s.client`. (Personas live in `.jaato/agents/`; the lead must be **completion-gated**. Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.) **How the lead knows to delegate, and to whom:** its persona `.md` carries the *strategy* (when to hand off), while the `subagent` plugin surfaces the available *targets* — the lead calls `list_subagent_profiles` to read each profile's name + description, then `spawn_subagent(profile=…/agent=…, task=…)`. That mirrors Mastra's `agents:{}` declaration (where the model sees each sub-agent's `description`) plus the supervisor's `instructions` — jaato just *discovers* the targets from `.jaato/profiles/` rather than declaring them inline.
 
 ## 9. Multi-stage pipeline (workflow vs cascade)
 
