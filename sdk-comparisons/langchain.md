@@ -9,7 +9,7 @@ That difference makes the basic examples *heavier* in jaato-sdk (you pay for the
 
 > **Setup.** LangChain: `pip install langchain langchain-openai` (and `langgraph` for the agent/HITL/durability examples). jaato-sdk: `pip install jaato-sdk` + a reachable daemon socket; `from jaato_sdk import IPCClient, IPCRecoveryClient, ClientType, EventType`. All jaato calls are `async`. The LangChain snippets use the current LCEL / `langchain_openai` / LangGraph idioms (the API churns across majors — see the caveat at the end).
 
-The verified jaato-sdk knobs every example relies on (baked into `jaato-scaffold new client`): `client_type=ClientType.API` (keeps `signal_completion` for headless completion), `connect(timeout=120.0)` (a cold daemon autostart is ~30–60s), a **real** `env_file` (None crashes the handshake), and completion via `subscribe_once(EventType.SESSION_TERMINATED)`.
+The verified jaato-sdk knobs every example relies on (baked into `jaato-scaffold new client`): `client_type=ClientType.API` (keeps `signal_completion` for headless completion), `connect(timeout=120.0)` (a cold daemon autostart is ~30–60s — the constructor's `autostart_timeout` is the precise cold-start knob), and a **real** `env_file` (None raises a `ValueError` at construction). **Knowing when a turn is "done" matters:** a plain turn ends on **`TURN_COMPLETED`**; a *completion-gated* session (a profile with a `completion_payload_schema`, where the agent calls `signal_completion`) *also* emits **`SESSION_TERMINATED`**. Since a bare prompt on a generic profile may not call `signal_completion`, the one-shot helper below waits on the **first of either** — so it never hangs on a turn that just answered.
 
 ---
 
@@ -35,6 +35,8 @@ async def main():
 
     done, out = asyncio.Event(), []
     client.subscribe(EventType.AGENT_OUTPUT, lambda e: out.append(getattr(e, "text", "")))
+    # a plain turn ends on TURN_COMPLETED; a completion-gated one on SESSION_TERMINATED — wait for either
+    client.subscribe_once(EventType.TURN_COMPLETED, lambda e: done.set())
     client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: done.set())
 
     await client.create_session(profile={"model": "gpt-4o", "provider": "openai"})
@@ -59,10 +61,11 @@ asyncio.run(main())
 > async def ask(client, prompt, **session):          # one-shot: send + collect + wait
 >     done, out = asyncio.Event(), []
 >     client.subscribe(EventType.AGENT_OUTPUT, lambda e: out.append(getattr(e, "text", "")))
->     client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: done.set())
+>     client.subscribe_once(EventType.TURN_COMPLETED, lambda e: done.set())      # plain turn
+>     client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: done.set())  # completion-gated
 >     await client.create_session(**session)
 >     await client.send_message(prompt)
->     await done.wait()
+>     await done.wait()                               # first of either — never hangs
 >     return "".join(out)
 > ```
 
@@ -79,7 +82,7 @@ for chunk in llm.stream("Tell me a short story."):
 client = await connect()
 client.subscribe(EventType.AGENT_OUTPUT,
                  lambda e: print(getattr(e, "text", ""), end="", flush=True))
-client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: ...)
+client.subscribe_once(EventType.TURN_COMPLETED, lambda e: ...)   # turn done
 await client.create_session(profile={"model": "gpt-4o", "provider": "openai"})
 await client.send_message("Tell me a short story.")
 ```
