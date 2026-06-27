@@ -13,8 +13,18 @@ This repo contains only the documentation:
 the_Jaato_Arch_visualization/        # this repo
 ├── README.md            ← this index
 ├── TEMPLATE.md          ← the shared section structure + style spec every doc follows
-└── components/          ← the 24 standalone component docs (00 overview + 01–23)
+├── components/          ← the 24 standalone component docs (00 overview + 01–23)
+└── sdk-comparisons/     ← usage-oriented, example-based SDK comparisons vs other frameworks
 ```
+
+## SDK comparisons
+
+A separate genre from the architecture docs above: **side-by-side, example-driven** SDK-usage
+comparisons of jaato-sdk against other agent frameworks (10 examples, simplest → most complex).
+
+| Doc | Compares |
+|-----|----------|
+| [langchain](sdk-comparisons/langchain.md) | **jaato-sdk vs LangChain** (Python) — hello-world → streaming → typed output → tools → agent loop → human-in-the-loop → multi-agent → cascade → production/recovery |
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
 **git-ignored — not part of this repo** (two are private):
