@@ -279,7 +279,7 @@ agent = create_react_agent("openai:gpt-4o", tools=tools, checkpointer=PostgresSa
 def on_status(s): print("connection:", s)             # reconnecting / connected / closed
 client = IPCRecoveryClient("/tmp/jaato.sock", client_type=ClientType.API,
                            auto_start=True, env_file=".env", workspace_path=".",
-                           on_status=on_status)        # auto-reconnect across restarts
+                           on_status_change=on_status)  # auto-reconnect across restarts
 await client.connect(timeout=120.0)
 sid = await client.create_session(profile={"model": "gpt-4o", "provider": "openai"})
 await client.send_message("Long task…")               # survives a daemon bounce;
