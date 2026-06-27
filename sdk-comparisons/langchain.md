@@ -180,13 +180,18 @@ async with IPCClient.session(
 
 ## 8. Multi-agent / subagent delegation
 
-**LangChain (LangGraph)** — you wire the topology (supervisor / handoffs):
+**LangChain (LangGraph)** — a **supervisor** that *dynamically* delegates to worker agents (`langgraph-supervisor`):
 ```python
-from langgraph.graph import StateGraph, START
-g = StateGraph(State)
-g.add_node("researcher", researcher_agent); g.add_node("writer", writer_agent)
-g.add_edge(START, "researcher"); g.add_edge("researcher", "writer")
-g.compile().invoke({"topic": "tide pools"})
+from langgraph_supervisor import create_supervisor
+from langgraph.prebuilt import create_react_agent
+
+researcher = create_react_agent("openai:gpt-4o", tools=[web_search], name="researcher", prompt="Research topics.")
+writer     = create_react_agent("openai:gpt-4o", tools=[], name="writer", prompt="Write blurbs.")
+supervisor = create_supervisor(
+    [researcher, writer], model="openai:gpt-4o",
+    prompt="You manage a researcher and a writer. Delegate to each as the task needs.",
+).compile()
+supervisor.invoke({"messages": [("user", "Write a blurb about tide pools.")]})   # supervisor routes via handoff tools
 ```
 
 **jaato-sdk** — the supervisor's **persona** gives it a delegating *role* (its "soul" — how it behaves, **not** a task; the equivalent of the system prompt you'd give a LangGraph supervisor). The actual work arrives separately, as the **first prompt**. The delegation it triggers is **async + daemon-driven**, so the client drops to the event API. The persona:
@@ -212,7 +217,7 @@ async with IPCClient.session(agent="lead",
     print("".join(out))
 ```
 
-**Side by side.** Both are true **delegation** — one lead agent decides when to hand off. But the execution models differ sharply. LangGraph runs the supervisor graph **in your process**, blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event that **the daemon uses to auto-continue the lead** on a later turn, until the lead composes and `signal_completion`s. Because that spans many turns, this is the one example that uses the **event API**: the facade's `ask`/`complete`/`stream` all return on the first `TURN_COMPLETED` (the spawn turn), so you wait on `s.client` for the final `SESSION_TERMINATED`. (The `lead`/`researcher`/`writer` personas live in `.jaato/agents/`, and the lead must be **completion-gated**. You can also orchestrate from the *client* instead — separate `ask()` calls passing output — when you'd rather own the control flow.) **How the lead knows to delegate, and to whom:** three inputs combine — the **persona** gives it the *role* (a coordinator that delegates rather than working directly), the **first prompt** carries the *task*, and the **`subagent` plugin** supplies the *means + targets*: the lead calls `list_subagent_profiles` (jaato's analog of a declared agent registry, discovered from `.jaato/profiles/`) to read each profile's name + description, then `spawn_subagent(profile="researcher", task=…)`. (The `agent=` persona axis is a *separate*, non-discovered selector. LangGraph instead bakes the role + routing into the graph you wire.)
+**Side by side.** Both are true **delegation** — one lead agent decides when to hand off. But the execution models differ sharply. LangGraph runs the supervisor graph **in your process**, blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event that **the daemon uses to auto-continue the lead** on a later turn, until the lead composes and `signal_completion`s. Because that spans many turns, this is the one example that uses the **event API**: the facade's `ask`/`complete`/`stream` all return on the first `TURN_COMPLETED` (the spawn turn), so you wait on `s.client` for the final `SESSION_TERMINATED`. (The `lead`/`researcher`/`writer` personas live in `.jaato/agents/`, and the lead must be **completion-gated**. You can also orchestrate from the *client* instead — separate `ask()` calls passing output — when you'd rather own the control flow.) **How the lead knows to delegate, and to whom:** three inputs combine — the **persona** gives it the *role* (a coordinator that delegates rather than working directly), the **first prompt** carries the *task*, and the **`subagent` plugin** supplies the *means + targets*: the lead calls `list_subagent_profiles` (jaato's analog of a declared agent registry, discovered from `.jaato/profiles/`) to read each profile's name + description, then `spawn_subagent(profile="researcher", task=…)`. (The `agent=` persona axis is a *separate*, non-discovered selector. LangGraph's supervisor packs the same three inline: its `prompt` is the role, the `[researcher, writer]` list is the registry, and auto-generated handoff tools are the delegation.)
 
 ## 9. Multi-stage pipeline (chain vs cascade)
 
