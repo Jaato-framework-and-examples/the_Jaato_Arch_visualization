@@ -102,7 +102,7 @@ async with IPCClient.session(profile="person-extractor") as s:
     print(person["name"], person["age"])
 ```
 
-**Side by side.** This is where the two are closest in *spirit* and furthest in *locus*. Pydantic AI validates the model's output against a Pydantic model **in your process** (`output_type` → `result.output`, by default via the model's tool-calling). jaato makes typed output a **server-side completion gate**: the agent must call `signal_completion(payload)`, the daemon validates it against the JSON schema (and runs completion processors), and a wrong-shape payload is bounced back to the model to retry — the agent can't "finish" malformed, regardless of which client is connected.
+**Side by side.** This is where the two are closest in *spirit* and furthest in *locus*. Pydantic AI validates the model's output against a Pydantic model **in your process** (`output_type` → `result.output`, by default via the model's tool-calling). jaato makes typed output a **server-side completion gate**: the agent must call `signal_completion(payload)`, the daemon validates it (and runs completion processors), and a wrong-shape payload is bounced back to the model to retry — the agent can't "finish" malformed, regardless of which client is connected. Under the hood both lean on **JSON Schema** at the model layer — Pydantic AI *generates* it from your model, jaato authors it directly — and both can push it down as **strict / grammar-constrained decoding** when the provider supports it. The difference is what enforces and what you get back: Pydantic AI validates with **Pydantic** in your process and hands you a **typed object**; jaato validates **server-side with `jsonschema`** (not Pydantic) and hands you a **dict**.
 
 ## 5. A single tool / function call
 
@@ -282,8 +282,7 @@ async with IPCRecoveryClient.session(
 | You want… | Reach for |
 |---|---|
 | A tightly-typed agent in your Python process — Pydantic-validated output, deps, and tools; trivial to unit-test and embed | **Pydantic AI** |
-| Type-safe structured output and dependency injection as the core abstraction | **Pydantic AI** |
-| Best-in-class LLM observability (Logfire / OpenTelemetry) | **Pydantic AI** (jaato also emits OTel, daemon-side) |
+| A low-setup, **first-party** LLM-observability *platform* (Logfire — built-in instrumentation, conversation/token/cost UI, by the same team) | **Pydantic AI** (both speak OpenTelemetry; jaato emits the same signals daemon-side to a backend *you* choose, with no bundled UI) |
 | Multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / cascades / crash-recovery; provider- and runtime-agnostic (local GPUs); server-enforced typed completion gates; a thin client with per-agent memory isolated in server-side runners | **jaato-sdk** |
 
 **Honest caveats.**
