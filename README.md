@@ -26,7 +26,7 @@ A growing series — this first iteration covers LangChain; the rest are planned
 | Framework | Status | Doc |
 |-----------|--------|-----|
 | **LangChain / LangGraph** | ✅ available | [langchain](sdk-comparisons/langchain.md) — hello-world → streaming → typed output → tools → agent loop → HITL → multi-agent → cascade → production/recovery |
-| **Mastra** | planned | — |
+| **Mastra** | ✅ available | [mastra](sdk-comparisons/mastra.md) — TS-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → workflow/cascade → production |
 | **Pydantic AI** | planned | — |
 | **Agno** | planned | — |
 | **Strands** | planned | — |
