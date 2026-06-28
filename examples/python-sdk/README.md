@@ -103,12 +103,11 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
   and needs both: (1) a `completion_payload_schema` with that top-level field on
   the **producer** profile (so `signal_completion(field=…)` attaches a validated
   typed payload) — `extract.json`→`facts`, `summarize.json`→`summary`,
-  `verify.json`→`verdict`; and (2) **server with jaato PR #414**, which hoists the
-  typed payload onto the bus event the reactor receives (before #414 it sat one
-  level too deep → `None`, a real core bug this example surfaced). **Real
-  cross-stage data flow requires server ≥ #414** (until it merges to main);
-  pre-#414 each stage still spawns (structure works) but reads `None`. Validated
-  end-to-end on #414: summarise gets the real facts, verify the real summary.
+  `verify.json`→`verdict`; and (2) the server hoists that typed payload onto the
+  bus event the reactor receives (jaato PR #414 — before it, the payload sat one
+  level too deep → `None`, a real core bug this example surfaced; the fix is on
+  main). Validated end-to-end: summarise gets the real facts, verify the real
+  summary (verdict "pass").
 - **ex03 — client-driven multi-turn deadlocked (now fixed upstream).** Any two
   sequential `s.ask` on one session hung on turn 2: the daemon emitted
   `TURN_COMPLETED` before clearing `_model_running`, so turn 2's send hit the

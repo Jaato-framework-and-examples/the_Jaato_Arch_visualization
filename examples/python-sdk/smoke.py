@@ -43,19 +43,29 @@ def report_written(out):
     return (HERE / "report.txt").exists()
 
 
-def cascade_spawned(out):
-    # ex09 triggers stage 1; the reactor spawns the 'summarize' stage decoupled
-    # in the daemon. Confirm by watching the daemon log for that session.
-    deadline = time.time() + 90
+def cascade_threaded(out):
+    # ex09 triggers stage 1; the reactor chain runs extract -> summarize ->
+    # verify decoupled in the daemon. Assert REAL typed-payload threading (not
+    # just that stages spawn): the newest summarize stage must have received the
+    # extract's facts (its injected prompt is NOT "...: None"), and the verify
+    # stage must have run. Poll the per-session records the stages write.
+    sdir = HERE / ".jaato" / "sessions"
+    deadline = time.time() + 110
     while time.time() < deadline:
-        try:
-            log = Path(DAEMON_LOG).read_text(errors="ignore")
-        except FileNotFoundError:
-            log = ""
-        # a summarize-profile session created after the extract stage
-        if "profile=summarize" in log or "agent=summarize" in log or "summarize (" in log:
+        recs = sorted(sdir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True) if sdir.exists() else []
+        newest_summarize, verify_ran = None, False
+        for p in recs[:15]:
+            try:
+                t = p.read_text(errors="ignore")
+            except OSError:
+                continue
+            if newest_summarize is None and "Summarise these findings:" in t:
+                newest_summarize = t
+            if "Verify this summary is accurate" in t:
+                verify_ran = True
+        if newest_summarize and "Summarise these findings: None" not in newest_summarize and verify_ran:
             return True
-        time.sleep(3)
+        time.sleep(4)
     return False
 
 
@@ -74,7 +84,7 @@ EXAMPLES = [
     ("ex06_multitool.py",       200, report_written),
     ("ex07_permissions.py",     150, has("[permission]")),
     ("ex08_subagent.py",        240, nonempty),
-    ("ex09_cascade.py",         200, cascade_spawned),
+    ("ex09_cascade.py",         200, cascade_threaded),
     ("ex10_recovery.py",        150, has("connected")),
 ]
 

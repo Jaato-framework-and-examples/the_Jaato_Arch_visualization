@@ -29,10 +29,11 @@ each stage completion-gated (completion_payload_schema: extract→`facts`,
 summarise→`summary`, verify→`verdict`) so the next reactor fires and the typed
 payload threads via `event.get(<field>)` (see spawn_summarize.py / spawn_verify.py).
 
-REAL typed data flow between stages needs server with jaato PR #414 (the
-typed-payload bus-hoist this example surfaced). Validated end-to-end on #414:
-summarise gets the real facts and verify the real summary (verdict "pass"). On an
-older server the stages still spawn (structure works) but the payload reads None.
+The typed payload threads via `event.get(<field>)` because each producer profile
+declares a `completion_payload_schema` and the server hoists the validated
+payload onto the bus event (jaato PR #414 — this example surfaced that bug; the
+fix is on main). End-to-end: summarise gets the real facts, verify the real
+summary (verdict "pass").
 
 Standing deviations (see README): `**CONN`. (Model/provider + plugins live in the
 profile JSONs.)
