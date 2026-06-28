@@ -1,0 +1,33 @@
+{
+  "name": "person-extractor",
+  "description": "Extracts a person's name and age into a server-validated completion payload.",
+  "model": "google/gemini-2.5-flash",
+  "provider": "openrouter",
+  "max_turns": 3,
+  "plugins": [],
+  "plugin_configs": {
+    "openrouter": {
+      "api_key": "pass://jaato/openrouter/api-key"
+    }
+  },
+  "system_instructions": "You extract structured facts about a person from the user's text. Do not chat. Immediately call the `signal_completion` tool with a payload matching the completion schema: `name` (string) and `age` (integer). Calling `signal_completion` is REQUIRED to end the turn.",
+  "completion_payload_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "name",
+      "age"
+    ],
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "The person's name."
+      },
+      "age": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "The person's age in years."
+      }
+    }
+  }
+}
