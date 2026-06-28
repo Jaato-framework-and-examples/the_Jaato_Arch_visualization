@@ -240,27 +240,28 @@ const run = await wf.createRunAsync();
 await run.start({ inputData: { doc: text } });
 ```
 
-**jaato-sdk** — a real cascade is **event + reactor driven**, not a client loop. The client (TS here) only starts **stage 1**; a **reactor** spawns every later stage server-side when the prior one completes:
+**jaato-sdk** — a real cascade is **event + reactor driven**, not a client loop. Each stage runs a **persona** (`agent`, its soul) under a **profile**, and needs a **first message** (its task): the client (TS here) supplies **stage 1**'s, and a **reactor** *injects* every later stage's from the prior stage's output (no human types it):
 ```ts
 import { randomUUID } from "node:crypto";
 const cid = randomUUID();
-await using s = await JaatoClient.session({ url, profile: "extract", cascadeDriverId: cid });
-await s.complete("Extract the facts from this doc: …");   // a headless stage; its completion drives the next
+await using s = await JaatoClient.session({ url, agent: "extract", profile: "extract", cascadeDriverId: cid });
+await s.complete("Extract the facts from this doc: …");   // stage 1's first message (its task)
 ```
 The hop lives in a **deployment reactor** that runs **inside the daemon** (Python, regardless of your client language) — `.jaato/reactors/` + `.jaato/scripts/`:
 ```jsonc
 // .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
 { "rules": [{ "id": "cascade.after_extract",
-              "match": { "event_type": "agent.completed", "where": "agent_id == 'extract'" },
+              "match": { "event_type": "agent.completed", "where": "source_agent == 'extract'" },
               "action": { "script": "scripts/spawn_summarize.py" } }] }
 ```
 ```python
 # .jaato/scripts/spawn_summarize.py — runs INSIDE the daemon on that event
 def execute(params, event, ctx):
-    facts = event.get("payload")                       # the prior stage's typed signal_completion output
-    ctx.create_session(agent="summarize",              # spawn the next headless stage, server-side
-                       initial_prompt=f"Summarise: {facts}",
-                       cascade_driver_id=event.get("cascade_driver_id"))   # reuse the warm slot
+    facts = event.get("facts")                         # the prior stage's signal_completion fields are hoisted to the event's top level
+    ctx.create_session(
+        agent="summarize", profile="summarize",        # the next stage's persona (soul) + profile (runtime)
+        initial_prompt=f"Summarise these findings: {facts}",   # its FIRST MESSAGE (task) — injected here; no human types it
+        cascade_driver_id=read_cascade_driver_id(ctx.workspace_path))   # cid from the workspace cascade_state, not the event
 ```
 
 **Side by side.** Mastra's `Workflow` is a **typed, in-process orchestration you drive** — `createStep`/`.then()`/`.branch()`/parallel, Zod-validated, with `suspend`/`resume` and snapshots. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** (running in the daemon, Python, whatever your client's language) reacts to that completion event and spawns the successor, threading the prior stage's typed payload into a freed warm slot. The client only triggers stage 1; the pipeline runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated, and you branch or fan out by adding **rules, not code**. *(A client loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse.)*
