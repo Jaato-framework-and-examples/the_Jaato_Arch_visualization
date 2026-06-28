@@ -41,7 +41,7 @@ A different shape: agent **platforms / IDEs** (not build-an-agent SDKs) compared
 |----------|--------|-----|
 | **Ona** (ex-Gitpod, now OpenAI) | ✅ available | [ona](platform-comparisons/ona.md) — managed cloud agent platform vs self-hosted daemon: launch / poll / steer / stop background agents, automations, environments & isolation |
 | **Kiro** (AWS agentic IDE) | ✅ available | [kiro](platform-comparisons/kiro.md) — agentic IDE vs self-hosted daemon: headless CLI, file-defined agents, permissions, hooks↔reactors, steering↔persona, spec-driven vs cascade |
-| **Intent** (Augment Code) | planned | — |
+| **Intent** (Augment Code) | ✅ available | [intent](platform-comparisons/intent.md) — desktop orchestration cockpit vs headless engine *(prose-only: Intent has no CLI/API/config surface)*: coordinator→specialists→verifier, worktrees, meta-orchestration vs reactor cascade |
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
 **git-ignored — not part of this repo** (two are private):
