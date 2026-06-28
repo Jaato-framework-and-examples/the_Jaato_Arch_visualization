@@ -228,17 +228,30 @@ chain = extract_prompt | llm | parser | summarize_prompt | llm
 chain.invoke({"doc": text})                           # synchronous data flow, your process
 ```
 
-**jaato-sdk** — a **cascade**: sequential sessions sharing one **warm runner slot**:
+**jaato-sdk** — a real cascade is **event + reactor driven**, not a client loop. The client only starts **stage 1**; a **reactor** spawns every later stage server-side when the prior one completes:
 ```python
 import uuid
-cid = uuid.uuid4().hex                                 # one id per cascade
-for prompt in ["Stage 1: extract.", "Stage 2: summarize."]:
-    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai"},
-                                 cascade_driver_id=cid) as s:   # reuse the warm slot (~7s vs ~30s)
-        await s.complete(prompt)   # complete() waits SESSION_TERMINATED → slot settled before the next stage
+cid = uuid.uuid4().hex
+async with IPCClient.session(profile="extract", cascade_driver_id=cid) as s:
+    await s.complete("Extract the facts from this doc: …")   # a headless stage; its completion drives the next
+```
+The hop lives in a **deployment reactor** (`.jaato/reactors/` + `.jaato/scripts/`), running inside the daemon:
+```jsonc
+// .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
+{ "rules": [{ "id": "cascade.after_extract",
+              "match": { "event_type": "agent.completed", "where": "agent_id == 'extract'" },
+              "action": { "script": "scripts/spawn_summarize.py" } }] }
+```
+```python
+# .jaato/scripts/spawn_summarize.py — runs INSIDE the daemon on that event
+def execute(params, event, ctx):
+    facts = event.get("payload")                       # the prior stage's typed signal_completion output
+    ctx.create_session(agent="summarize",              # spawn the next headless stage, server-side
+                       initial_prompt=f"Summarise: {facts}",
+                       cascade_driver_id=event.get("cascade_driver_id"))   # reuse the warm slot
 ```
 
-**Side by side.** A LangChain chain is synchronous data flow inside one process. A jaato cascade is a chain of **headless sessions** linked by completion events, reusing a pre-warmed runner slot (`cascade_driver_id`) so each stage skips cold-start — and in a real deployment the stage-to-stage handoff is **reactor-driven** (a reactor spawns the next stage on `slot.settled`), so stages are decoupled and observable. To *watch* a running cascade read-only, use the low-level event iterator — `async for ev in client.cascade_events(cid, event_types=[...], role="observer"): ...` — which is the *same* surface the facade exposes as `s.client`, so you interleave it with `s.ask`/`s.complete` rather than choosing one or the other.
+**Side by side.** A LangChain LCEL chain is **synchronous, in-process data flow you drive**. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** reacts to that completion event and spawns the successor (threading the prior stage's typed payload into a freed warm slot). The client only triggers stage 1; the pipeline runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated, and you branch or fan out by adding **rules, not code**. *(A client `for`-loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse.)* To *watch* a running cascade read-only, use the low-level event iterator — `async for ev in client.cascade_events(cid, event_types=[...], role="observer"): ...` — the *same* surface the facade exposes as `s.client`.
 
 ## 10. Production: persistence, recovery, observability
 

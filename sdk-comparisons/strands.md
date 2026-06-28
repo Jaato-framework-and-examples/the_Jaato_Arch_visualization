@@ -229,17 +229,30 @@ graph = builder.build()
 graph("Summarize this document: …")
 ```
 
-**jaato-sdk** — a **cascade**: sequential sessions sharing one **warm runner slot**:
+**jaato-sdk** — a real cascade is **event + reactor driven**, not a client loop. The client only starts **stage 1**; a **reactor** spawns every later stage server-side when the prior one completes:
 ```python
 import uuid
 cid = uuid.uuid4().hex
-for prompt in ["Stage 1: extract.", "Stage 2: summarize."]:
-    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai"},
-                                 cascade_driver_id=cid) as s:        # reuse the warm slot (~7s vs ~30s)
-        await s.complete(prompt)    # complete() waits SESSION_TERMINATED → slot settled before the next stage
+async with IPCClient.session(profile="extract", cascade_driver_id=cid) as s:
+    await s.complete("Extract the facts from this doc: …")   # a headless stage; its completion drives the next
+```
+The hop lives in a **deployment reactor** (`.jaato/reactors/` + `.jaato/scripts/`), running inside the daemon:
+```jsonc
+// .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
+{ "rules": [{ "id": "cascade.after_extract",
+              "match": { "event_type": "agent.completed", "where": "agent_id == 'extract'" },
+              "action": { "script": "scripts/spawn_summarize.py" } }] }
+```
+```python
+# .jaato/scripts/spawn_summarize.py — runs INSIDE the daemon on that event
+def execute(params, event, ctx):
+    facts = event.get("payload")                       # the prior stage's typed signal_completion output
+    ctx.create_session(agent="summarize",              # spawn the next headless stage, server-side
+                       initial_prompt=f"Summarise: {facts}",
+                       cascade_driver_id=event.get("cascade_driver_id"))   # reuse the warm slot
 ```
 
-**Side by side.** Strands' `Graph` is a **deterministic, in-process orchestration** of agent nodes (DAG or cyclic, for feedback loops), with state flowing along the edges — its `Workflow` tool can even pause/resume across sessions. jaato's cascade is a chain of **headless sessions** linked by completion events, reusing a pre-warmed runner slot so each stage skips cold-start — and in a real deployment the stage-to-stage handoff is **reactor-driven**. One in-process graph you author and run; decoupled isolated sessions chained by the daemon.
+**Side by side.** Strands' `Graph` is a **deterministic, in-process orchestration you drive** (DAG or cyclic), with state flowing along the edges. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** reacts to that completion event and spawns the successor (threading the prior stage's typed payload into a freed warm slot). The client only triggers stage 1; the pipeline then runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated/observable, and you branch or fan out by adding **rules, not code**. *(A client `for`-loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse — see the cascade docs.)*
 
 ## 10. Production: persistence, recovery, observability
 
