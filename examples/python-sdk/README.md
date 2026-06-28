@@ -93,6 +93,27 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
   workspace cascade_state" comment) is pseudocode; the real cid is read from the
   managed session record via `ctx.session_manager.get_session(ctx.session_id)`.
   `spawn_summarize.py` uses the real mechanism.
+- **ex09 — `reactors.json` requires `"version": 1`.** The doc's reactor snippet
+  omits it; without it the rule file fails to load (`Unsupported reactors.json
+  version: None`) and the cascade never fires.
+- **ex09 — typed-payload handoff drops the payload (under investigation).** The
+  cascade *structure* works (the reactor fires and spawns the gated next stage,
+  decoupled), but the validated `signal_completion` payload isn't surfaced to the
+  reactor script: `event.get("facts")` returns `None` even though the extract
+  stage emitted a correct `{"facts": …}` payload. The access pattern is correct
+  (verified against `build_merged_view`); the delivered `agent.completed` event
+  carries the envelope fields but not `payload`. Flagged upstream.
+- **ex03 — client-driven multi-turn deadlocks (pending upstream fix).** Two
+  sequential `s.ask` on one workspace+agent session hang on turn 2 (the send
+  queues behind a stuck `_model_running`). Reported with a repro; held PENDING in
+  `smoke.py` (not an example defect).
+- **ex06 — the autonomous loop needs daemon-side config the docs omit.** jaato
+  gates file/cli tools by default (set `permission.policy.defaultPolicy:"allow"`),
+  and `file_edit` fails to initialise on this build — it can't resolve its backup
+  dir before init, and `config_root` / `plugin_configs.file_edit.backup_dir` are
+  applied too late (framework PR-146 init-ordering). So file_edit is dropped and
+  the agent saves via `cli`. (`web_search` is kept — it uses `ddgs`/DuckDuckGo,
+  no API key, and works with network access.) See the file header.
 
 ## The dedicated daemon
 

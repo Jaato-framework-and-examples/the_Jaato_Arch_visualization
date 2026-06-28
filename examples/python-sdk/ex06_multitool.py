@@ -13,40 +13,37 @@ Doc snippet (verbatim shape):
             "plugins": ["cli", "web_search", "file_edit", "todo"]}) as s:
         print(await s.ask("Plan a trip to Paris and save it to trip.md"))
 
-FINDINGS (the doc's autonomous loop needs daemon-side config the docs omit —
-they assume the ungated openai path with all tool backends present):
-  1. jaato gates file/cli tools by default (permission defaultPolicy "deny"), so
-     a loop with no on_permission raises PermissionUnhandled the moment the agent
-     calls e.g. readFile. We set a permissive policy so it runs unattended
-     (ex07 shows the interactive on_permission path).
-  2. file_edit needs an operator-supplied backup dir (it writes backups under
-     <backup_dir>/...); without config_root *or* plugin_configs.file_edit.backup_dir
-     it won't initialise (framework PR-146 init-ordering). We set backup_dir.
-  3. web_search needs a search backend that this bare test daemon doesn't have,
-     so it's dropped from the live set; the loop is shown with cli/file_edit/todo
-     (the deployable subset). The comparison-doc snippet keeps the full 4-plugin
-     list as the illustration.
+FINDINGS (the doc's autonomous loop needs daemon-side config the docs omit — they
+assume the ungated openai path with all tool backends present):
+  1. jaato gates file/cli tools by default (permission defaultPolicy "deny"), so a
+     loop with no on_permission raises PermissionUnhandled the moment the agent
+     calls a gated tool. We set a permissive policy so it runs unattended (ex07
+     shows the interactive on_permission path).
+  2. file_edit won't initialise on this build: it needs its backup dir resolved
+     before init, but config_root / plugin_configs.file_edit.backup_dir are
+     applied too late (framework PR-146 init-ordering). So it's the one plugin
+     dropped from the live set; the agent saves trip.md via `cli` instead.
+(web_search is kept — it uses the `ddgs`/DuckDuckGo library, no API key/backend,
+and works as long as the daemon has network access.)
+So the live plugin set is cli + web_search + todo. The comparison-doc snippet
+keeps the full 4-plugin list as the illustration.
 
 Standing requirement: explicit `plugins`. Standing deviations (see README):
-`**CONN`, `**AUTH` (pass: cred knob), the model/provider literal, + the daemon
-config above. Runs in WORKSPACE so file_edit writes here (trip.md is gitignored).
+`**CONN`, `**AUTH` (pass: cred knob), the model/provider literal, the permissive
+policy, and the reduced plugin set above. Runs in WORKSPACE so cli's cwd is here
+(trip.md is gitignored).
 """
 import asyncio
-import os
 from jaato_sdk import IPCClient
 from _config import CONN, WORKSPACE, AUTH
 
-BACKUP_DIR = os.path.join(WORKSPACE, ".jaato", "backups")
-
 
 async def main():
-    async with IPCClient.session(**CONN, workspace_path=WORKSPACE, config_root=WORKSPACE,
-                                 profile={
+    async with IPCClient.session(**CONN, workspace_path=WORKSPACE, profile={
             "model": "openai/gpt-4o-mini", "provider": "openrouter",
-            "plugins": ["cli", "file_edit", "todo"],   # web_search dropped — see FINDING 3
+            "plugins": ["cli", "web_search", "todo"],   # only file_edit dropped — see FINDING 2
             "plugin_configs": {**AUTH["plugin_configs"],
-                               "permission": {"policy": {"defaultPolicy": "allow"}},
-                               "file_edit": {"backup_dir": BACKUP_DIR}}}) as s:
+                               "permission": {"policy": {"defaultPolicy": "allow"}}}}) as s:
         print(await s.ask("Plan a trip to Paris and save it to trip.md"))
 
 
