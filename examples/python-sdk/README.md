@@ -104,20 +104,21 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
   stage emitted a correct `{"facts": …}` payload. The access pattern is correct
   (verified against `build_merged_view`); the delivered `agent.completed` event
   carries the envelope fields but not `payload`. Flagged upstream.
-- **ex03 — client-driven multi-turn deadlocks (pending upstream fix).** Any two
-  sequential `s.ask` on one session hang on turn 2: the daemon emits
-  `TURN_COMPLETED` before clearing `_model_running`, so turn 2's send hits the
-  "still running" gate, is forwarded as an inject onto an idle session with no
-  drainer, and queues forever. Root-caused with a diagnostic trace (not ws/agent/
-  reactor — a core runner-tier race). Held PENDING in `smoke.py` (not an example
-  defect); ex03 is the only example doing two client-driven asks.
-- **ex06 — the autonomous loop needs daemon-side config the docs omit.** jaato
-  gates file/cli tools by default (set `permission.policy.defaultPolicy:"allow"`),
-  and `file_edit` fails to initialise on this build — it can't resolve its backup
-  dir before init, and `config_root` / `plugin_configs.file_edit.backup_dir` are
-  applied too late (framework PR-146 init-ordering). So file_edit is dropped and
-  the agent saves via `cli`. (`web_search` is kept — it uses `ddgs`/DuckDuckGo,
-  no API key, and works with network access.) See the file header.
+- **ex03 — client-driven multi-turn deadlocked (now fixed upstream).** Any two
+  sequential `s.ask` on one session hung on turn 2: the daemon emitted
+  `TURN_COMPLETED` before clearing `_model_running`, so turn 2's send hit the
+  "still running" gate, was forwarded as an inject onto an idle session with no
+  drainer, and queued forever. Root-caused with a diagnostic trace (a core
+  runner-tier race, not ws/agent/reactor) and **fixed in jaato PR #413**
+  (drain-on-finally). ex03 is gated green again.
+- **ex06 — the autonomous loop needs daemon-side config + a tool-requiring task.**
+  jaato gates file/cli tools by default (set `permission.policy.defaultPolicy:
+  "allow"`), and `file_edit` fails to initialise (PR-146 init-ordering — backup
+  dir can't resolve before init), so it's dropped and file work goes via `cli`.
+  Also, the doc's vague "plan a trip and save it" is a flaky loop trigger (a model
+  may ask for clarification — which errors headless — or just print the answer
+  instead of saving it), so the example uses a task that *requires* tool output
+  (real date + dir listing → `report.txt`). See the file header.
 
 ## The dedicated daemon
 

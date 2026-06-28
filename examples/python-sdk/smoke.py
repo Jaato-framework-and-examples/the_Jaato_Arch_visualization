@@ -38,6 +38,11 @@ def has(*subs):
     return lambda out: any(s.lower() in out.lower() for s in subs)
 
 
+def report_written(out):
+    # ex06: the multi-tool loop must actually use the shell to create report.txt.
+    return (HERE / "report.txt").exists()
+
+
 def cascade_spawned(out):
     # ex09 triggers stage 1; the reactor spawns the 'summarize' stage decoupled
     # in the daemon. Confirm by watching the daemon log for that session.
@@ -54,12 +59,10 @@ def cascade_spawned(out):
     return False
 
 
-# Examples blocked on an upstream framework fix — run but don't gate the suite.
-# ex03: client-driven multi-turn (two sequential s.ask on one session) deadlocks
-# on a workspace+agent session (turn 2's send queues behind a stuck
-# _model_running). Reported + under investigation upstream; this is not an
-# example defect. Reinstate to the gated set once the fix lands.
-PENDING = {"ex03_persona_memory.py"}
+# No examples are blocked: the multi-turn deadlock that held ex03 was fixed
+# upstream (jaato PR #413, drain-on-finally). Keep this set empty unless a new
+# example gets blocked on an upstream fix.
+PENDING = set()
 
 # (script, timeout_s, validator)
 EXAMPLES = [
@@ -68,7 +71,7 @@ EXAMPLES = [
     ("ex03_persona_memory.py",  150, nonempty),
     ("ex04_typed_completion.py",120, has("alice", "30")),
     ("ex05_client_tool.py",     120, has("sunny", "24", "weather")),
-    ("ex06_multitool.py",       200, has("paris", "trip")),
+    ("ex06_multitool.py",       200, report_written),
     ("ex07_permissions.py",     150, has("[permission]")),
     ("ex08_subagent.py",        240, nonempty),
     ("ex09_cascade.py",         200, cascade_spawned),
