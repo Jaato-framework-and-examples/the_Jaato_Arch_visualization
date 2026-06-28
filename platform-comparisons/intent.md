@@ -17,7 +17,7 @@ So both decompose a goal, run specialists in isolation, and verify — but **Int
 
 **Intent** — **coordinator → specialists → verifier**, organized around a **human-approved spec**. The coordinator analyzes the repo and drafts a living specification; you approve the plan; specialist agents then work **in parallel** on decomposed tasks, each isolated in its own worktree; a verifier validates against the spec before it reaches you. Six built-in specialist roles ship in the box: **Investigate, Implement, Verify, Critique, Debug, Code Review**.
 
-**jaato** — the same *decompose → execute → verify* shape, but **event-driven and headless**. A **lead persona** delegates to **subagents** (`spawn_subagent`, daemon-driven, each isolated), or a **reactor-driven cascade** chains persona stages — e.g. `plan → implement → verify` — where each stage's `agent.completed` event triggers a reactor that spawns the next, and each stage is typed by a **completion gate**. Personas/profiles are **arbitrary** (you author them), not a fixed set of six.
+**jaato** — the same *decompose → execute → verify* shape, but **event-driven and headless**. A **lead persona** delegates to **subagents** (`spawn_subagent`, daemon-driven and async — *sharing the parent runner*; a per-subagent isolated runner is on the roadmap, not yet shipped), or a **reactor-driven cascade** chains persona stages — e.g. `plan → implement → verify`, **each stage its own independently isolated session** — where each stage's `agent.completed` event triggers a reactor that spawns the next, typed by a **completion gate**. Personas/profiles are **arbitrary** (you author them), not a fixed set of six.
 
 **Side by side.** Intent's coordinator/specialist/verifier maps closely onto jaato's lead + subagents (or a plan/implement/verify cascade). The differences: Intent's roster is **fixed and built-in** (six specialists) while jaato's personas are **open-ended**; Intent sequences around a **human-approved spec** in a GUI, while jaato sequences around **events + reactors** with no human in the loop unless a gate asks for one.
 
@@ -25,7 +25,7 @@ So both decompose a goal, run specialists in isolation, and verify — but **Int
 
 **Intent** runs each parallel task in its **own git worktree** — branch-level isolation so specialists don't collide, on your machine.
 
-**jaato** runs each agent in its **own per-session subprocess** — **AppArmor-confinable**, **cgroup-boundable** (`memory.max`), scoped to a **workspace**, on infrastructure you host.
+**jaato** runs each session in its **own per-session subprocess** — **AppArmor-confinable**, **cgroup-boundable** (`memory.max`), scoped to a **workspace**, on infrastructure you host.
 
 **Side by side.** Same instinct — isolate concurrent agents so they don't step on each other. Intent's unit is a **git worktree** (filesystem/branch isolation, local); jaato's is a **confined runner subprocess** (OS-level isolation, self-hosted, multi-tenant). jaato's is the stronger boundary; Intent's is lighter and git-native.
 
@@ -33,7 +33,7 @@ So both decompose a goal, run specialists in isolation, and verify — but **Int
 
 **Intent** is a **meta-orchestrator** — it doesn't run a model itself; it conducts **external backends** (Auggie, Claude Code, Codex, OpenCode). Its value is the *workspace + orchestration + verification* around whatever agent you plug in.
 
-**jaato** **is** the runtime — it runs the agents directly against any provider (Anthropic, Google, OpenAI, local vLLM/Ollama/…), with its own plugin tools, permissions, and completion gates.
+**jaato** **is** the runtime — it runs the agents directly against any provider (Anthropic, Google, OpenAI, local vLLM/Ollama/…), with its own plugin tools, permissions, and completion gates. And via its **provider abstraction** it can itself **drive other agent CLIs** as backends (e.g. `claude_cli` wrapping Claude Code, plus gemini-cli, antigravity) — so jaato spans both layers: a drivable runtime *and*, when it wants, a meta-orchestrator over CLI agents.
 
 **Side by side.** This is the sharpest divergence. Intent sits **above** agent backends and coordinates them through a desktop UI; jaato **is** the backend (and can itself be one of the things a meta-orchestrator drives). If you already live in Claude Code/Codex and want a cockpit to run several in parallel against a spec, that's Intent's pitch; if you want a hostable, provider-agnostic engine to embed and automate, that's jaato's.
 
@@ -41,7 +41,7 @@ So both decompose a goal, run specialists in isolation, and verify — but **Int
 
 **Intent** — a **macOS desktop GUI** (IDE + terminal + browser + git, unified). Human-operated; no headless/programmatic entry point found.
 
-**jaato** — **programmatic only**: an SDK (Python IPC / TypeScript WS), a CLI (`jaato --prompt`), and the raw WS protocol. No GUI cockpit (the federation dashboard aside).
+**jaato** — **programmatic only**: an SDK (Python IPC / TypeScript WS), a CLI (`jaato --prompt`), and the raw WS protocol. The interactive client is a **terminal TUI** (`rich_client`); there is **no GUI cockpit** (federation/clustering is the **gossip peer-mesh**, not a UI).
 
 **Side by side.** Opposite ends: Intent is **GUI-first, human-in-the-loop by design**; jaato is **API-first, automatable and unattended by design**. This is why the comparison is prose-only — there's no Intent command or config to set beside jaato's.
 
