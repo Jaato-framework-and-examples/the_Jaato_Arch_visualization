@@ -1,0 +1,20 @@
+{
+  "name": "verify",
+  "description": "Cascade stage 3: check the summary against the facts, completion-gated on a `verdict` payload.",
+
+  "model": "google/gemini-2.5-flash",
+  "provider": "openrouter",
+
+  "max_turns": 3,
+  "plugins": [],
+  "plugin_configs": { "openrouter": { "api_key": "pass://jaato/openrouter/api-key" } },
+
+  "completion_payload_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["verdict"],
+    "properties": {
+      "verdict": { "type": "string", "description": "pass or fail — whether the summary is accurate and complete." }
+    }
+  }
+}
