@@ -29,7 +29,7 @@ git diff | kiro-cli chat --no-interactive --trust-tools=read,grep "Review these 
 jaato --prompt "Who are you? One sentence."
 
 # composes into pipelines/CI the same way; the agent's tools + permissions come from its profile:
-git diff | jaato --prompt --agent reviewer "Review these changes for security"
+git diff | jaato --prompt "Review these changes for security" --agent reviewer
 ```
 
 **Side by side.** Both run a file-defined agent **headless from a terminal**, pipe-friendly for CI. Kiro authorizes tools **on the command line** (`--trust-tools` / `--trust-all-tools`) because headless can't prompt; jaato carries tools **and** their permission policy in the agent's **profile** (so the same `jaato --prompt` is safe headless without per-call flags — Example 3). Kiro talks to **Bedrock**; jaato to whatever provider the profile names.
@@ -61,9 +61,13 @@ risks succinctly, citing file:line.
 model: claude-sonnet-4-6
 provider: anthropic
 plugins: [cli, file_edit]
-permission:
-  allow: [read, grep]
-  write: { allowed_paths: ["src/**"] }
+plugin_configs:
+  permission:
+    policy:
+      defaultPolicy: deny
+      whitelist:
+        tools: [read, grep]
+        arguments: { file_edit: { path: ["src/**"] } }   # per-arg path scoping
 ```
 
 **Side by side.** Kiro packs everything into **one `.kiro/agents/*.json`**; jaato deliberately **separates the persona** (`.jaato/agents/*.md` — the reusable "soul") from the **profile** (`.jaato/profiles/*.yaml` — the swappable runtime), so you can run the same persona on a different model/provider by swapping profiles. Both reference an external prompt file and scope `write` to paths. Kiro is **Claude/Bedrock**; jaato names any provider.
@@ -82,14 +86,18 @@ kiro-cli chat --no-interactive --trust-tools=read,grep "…"     # or --trust-al
 
 **jaato** — a per-session **permission policy** in the profile (and an interactive callback when attended):
 ```yaml
-# .jaato/profiles/reviewer.yaml
-permission:
-  allow: [read, grep]                 # auto-approved
-  deny:  [shell]                      # blocked
-  ask:   [write]                      # escalates — to on_permission (attended) or a reactor gate (headless)
+# .jaato/profiles/reviewer.yaml → the permission plugin's policy
+plugin_configs:
+  permission:
+    policy:
+      defaultPolicy: ask              # residual: tools not listed below escalate…
+      whitelist: { tools: [read, grep] }   # …read/grep auto-approved
+      blacklist: { tools: [shell] }        # …shell blocked
+      # write is unlisted → falls through to defaultPolicy: ask
+      #   (on_permission when attended, or a reactor gate when headless)
 ```
 
-**Side by side.** Same two-layer idea — *availability* (which tools exist) vs *permission* (whether a call is approved). Kiro splits it across `tools`/`allowedTools` + the `--trust-*` flags; jaato puts a declarative **allow/deny/ask** policy on the profile, evaluated **server-side per session** (with per-arg patterns), so headless runs are governed by config rather than command-line trust — and an `ask` can escalate out-of-band via a reactor when no human is attached.
+**Side by side.** Same two-layer idea — *availability* (which tools exist) vs *permission* (whether a call is approved). Kiro splits it across `tools`/`allowedTools` + the `--trust-*` flags; jaato puts a declarative **whitelist / blacklist + `defaultPolicy`** on the profile, evaluated **server-side per session** (with per-arg value patterns), so headless runs are governed by config rather than command-line trust — and the residual `defaultPolicy: ask` can escalate out-of-band via a reactor when no human is attached.
 
 ## 4. Event-driven automation
 
@@ -107,7 +115,7 @@ permission:
 ```jsonc
 // .jaato/reactors/on_write.json — react to a bus event, run a script (which can spawn sessions)
 { "rules": [{ "id": "test.after_write",
-              "match": { "event_type": "tool.completed", "where": "tool == 'file_edit'" },
+              "match": { "event_type": "tool.call_completed", "where": "tool_name == 'file_edit'" },
               "action": { "script": "scripts/run_tests.py" } }] }
 ```
 
