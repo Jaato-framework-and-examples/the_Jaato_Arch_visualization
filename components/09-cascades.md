@@ -83,7 +83,7 @@ The handoff is **typed**, and that's what makes `event.get("facts")` work. Each 
     "properties": { "facts": { "type": "string", "description": "The extracted facts." } } } }
 ```
 
-The daemon validates that payload server-side and **hoists it onto the `agent.completed` event** the reactor receives, so the consumer reads it as `event.get("facts")`. Two things are required and easy to miss: **(1)** the schema on the *producer* (without it, `signal_completion` is a legacy summary and the payload is `None`); **(2)** a server that hoists the validated payload onto the bus event — this is `jaato` PR #414, which the reference cascade surfaced (before it, the payload sat one level too deep and `event.get("facts")` was `None`). With both, the chain threads real data: `summarize` gets the real facts, `verify` the real summary. The three stages are `facts → summary → verdict`.
+The daemon validates that payload server-side and **hoists it onto the `agent.completed` event** the reactor receives, so the consumer reads it as `event.get("facts")`. The one thing easy to miss: the schema must be on the *producer* — without it, `signal_completion` is a legacy summary and the payload is `None`. With it, the chain threads real data: `summarize` gets the real facts, `verify` the real summary. The three stages are `facts → summary → verdict`.
 
 A **durable alternative** the typed event-handoff doesn't replace: a producer can also write its output to an on-disk artifact (e.g. `.jaato/cascade_state/<x>.json`) that the next stage's pre-fetch reads. On-disk state survives the event entirely (and a daemon restart), which is why long production cascades often prefer it; the typed event-payload handoff is the lighter, event-native path.
 
@@ -175,7 +175,7 @@ flowchart LR
 - `examples/python-sdk/.jaato/scripts/spawn_summarize.py` / `spawn_verify.py` — the handlers: `event.get(<field>)`, cid off the originating session (`ctx.session_manager.get_session(ctx.session_id).cascade_driver_id`), `ctx.create_session(...)` with an injected first message.
 - `examples/python-sdk/.jaato/profiles/{extract,summarize,verify}.json` — each producing stage's `completion_payload_schema` (`facts` / `summary` / `verdict`) that types the handoff (top-level props = flat `signal_completion` args).
 - `examples/python-sdk/.jaato/agents/{extract,summarize,verify}.md` — the three stage personas.
-- `jaato/jaato-sdk/jaato_sdk/events.py:385` / `:455` — `AgentCompletedEvent` (typed `payload`, hoisted onto the event per jaato PR #414) + `SlotSettledEvent` (`was_warm`) for the production warm-slot handoff.
+- `jaato/jaato-sdk/jaato_sdk/events.py:385` / `:455` — `AgentCompletedEvent` (typed `payload`, hoisted onto the event for the reactor to read) + `SlotSettledEvent` (`was_warm`) for the production warm-slot handoff.
 - `jaato/jaato-server/server/session_manager.py:4688` / `:3329` — `_HEADLESS_CLIENT_ID` stage identity + `_dispatch_to_cascade_clients` event bridging to the `_cascade:{cid}` owner.
 - `jaato/jaato-server/server/runner_pool.py:285` — `acquire_slot(cascade_driver_id=...)` best-effort warm affinity.
 - `jaato/jaato-sdk/jaato_sdk/events.py:385` (`AgentCompletedEvent.payload`) — typed payload is attached only when the producer profile declares a `completion_payload_schema`; otherwise `None` (legacy summary).
