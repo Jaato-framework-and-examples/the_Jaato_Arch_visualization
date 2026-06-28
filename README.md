@@ -29,7 +29,7 @@ A growing series — this first iteration covers LangChain; the rest are planned
 | **Mastra** | ✅ available | [mastra](sdk-comparisons/mastra.md) — TS-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → workflow/cascade → production |
 | **Pydantic AI** | ✅ available | [pydantic-ai](sdk-comparisons/pydantic-ai.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → deferred-tools HITL → delegation → graph/cascade → production |
 | **Agno** | ✅ available | [agno](sdk-comparisons/agno.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → Teams → workflow/cascade → production |
-| **Strands** | planned | — |
+| **Strands** | ✅ available | [strands](sdk-comparisons/strands.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → graph/cascade → production |
 | **OpenAI Agents SDK** | planned | — |
 | **Claude Agent SDK** | planned | — |
 
