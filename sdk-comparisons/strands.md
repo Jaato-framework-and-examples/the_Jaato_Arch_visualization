@@ -176,7 +176,7 @@ async with IPCClient.session(
     print(await s.ask("Delete temp.log"))
 ```
 
-**Side by side.** Strands intercepts tool calls at the **agent-loop level** via its hook system — a `BeforeToolCallEvent` hook can raise an **interrupt** to pause for human approval and resume, all **in your process** (you handle the interrupt and continue). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook/Telegram bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
+**Side by side.** Strands intercepts tool calls at the **agent-loop level** via its hook system — a `BeforeToolCallEvent` hook can raise an **interrupt** to pause for human approval and resume, all **in your process** (you handle the interrupt and continue). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
 
 ## 8. Multi-agent / delegation
 

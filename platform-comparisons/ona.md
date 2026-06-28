@@ -9,7 +9,7 @@ Of everything compared in this series, Ona is the **closest architectural peer**
 
 So both are "launch agents server-side and drive them as a client." Ona gives you a managed, governed, OpenAI-powered cloud you call; jaato gives you a provider-agnostic engine you host and shape. Read it as a trade, not a scoreboard.
 
-> **Setup.** Ona: a `GITPOD_API_KEY`; calls are **gRPC-JSON over HTTPS** at `https://app.gitpod.io/api/` (the `gitpod.v1` namespace persists from the Gitpod heritage) — **no first-party SDK**, so its examples are `curl`. jaato has **two transports**: **IPC** (a *local* Unix socket — the Python `IPCClient`) and **WebSocket** (`--web-socket :8089` + a bearer token — *remote*). Ona is a remote service over HTTPS, so the apt analog is jaato's **WS / remote path**: the open wire protocol (JSON frames, callable with `curl`/`websocat`) **plus** the **TypeScript** facade (`JaatoClient.session({url:"wss://…"})`). Example 1 compares **raw protocol on both sides** (Ona REST ↔ jaato WS frames) and also shows jaato's **TS facade** once — the SDK Ona has no equivalent of; the **rest stay at the raw-WS level on both sides**, wire-for-wire. *(The Python `IPCClient` is the local IPC client — not the remote analog; see the caveats.)*
+> **Setup.** Ona: a `GITPOD_API_KEY`; calls are **gRPC-JSON over HTTPS** at `https://app.gitpod.io/api/` (the `gitpod.v1` namespace persists from the Gitpod heritage) — **no first-party SDK**, so its examples are `curl`. jaato has **two transports**: **IPC** (a *local* Unix socket — the Python `IPCClient`) and **WebSocket** (`--web-socket :8080` + a bearer token — *remote*). Ona is a remote service over HTTPS, so the apt analog is jaato's **WS / remote path**: the open wire protocol (JSON frames, callable with `curl`/`websocat`) **plus** the **TypeScript** facade (`JaatoClient.session({url:"wss://…"})`). Example 1 compares **raw protocol on both sides** (Ona REST ↔ jaato WS frames) and also shows jaato's **TS facade** once — the SDK Ona has no equivalent of; the **rest stay at the raw-WS level on both sides**, wire-for-wire. *(The Python `IPCClient` is the local IPC client — not the remote analog; see the caveats.)*
 
 ---
 
@@ -31,7 +31,7 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/StartAgent \
 
 **jaato** — *same wire level as Ona:* raw **WS frames** over the daemon's remote WebSocket endpoint (bearer token):
 ```bash
-websocat "wss://localhost:8089/?token=$JAATO_WS_TOKEN"   # CLI clients may use an Authorization: Bearer header
+websocat "wss://localhost:8080/?token=$JAATO_WS_TOKEN"   # CLI clients may use an Authorization: Bearer header
 # ← {"type":"connected","server_info":{...}}              # wait for this greeting, then send commands
 → {"type":"command.execute","command":"session.new","args":["--profile","backend"],"payload":{}}
 → {"type":"message.send","text":"Refactor the auth module and open a PR."}
@@ -40,7 +40,7 @@ websocat "wss://localhost:8089/?token=$JAATO_WS_TOKEN"   # CLI clients may use a
 …or jaato's **SDK** over the *same* protocol — the **TypeScript** facade (Ona has no SDK at all):
 ```ts
 import { JaatoClient } from "@jaato/sdk";
-await using s = await JaatoClient.session({ url: "wss://localhost:8089", token, profile: "backend" });
+await using s = await JaatoClient.session({ url: "wss://localhost:8080", token, profile: "backend" });
 console.log(await s.complete("Refactor the auth module and open a PR."));
 // to launch-and-DETACH like Ona's StartAgent, use the low-level client (createSession + sendMessage,
 // don't dispose) — the run continues daemon-side; the session id comes back on the session.new reply,

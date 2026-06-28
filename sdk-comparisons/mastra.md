@@ -30,7 +30,7 @@ console.log(res.text);
 import { JaatoClient } from "@jaato/sdk";
 
 await using s = await JaatoClient.session({
-  url: "wss://localhost:8089",
+  url: "wss://localhost:8080",
   profile: { model: "gpt-4o", provider: "openai", plugins: [] },
 });
 console.log(await s.ask("Who are you? One sentence."));
@@ -38,7 +38,7 @@ console.log(await s.ask("Who are you? One sentence."));
 …or the one-shot module helper, for a throwaway call:
 ```ts
 import { ask } from "@jaato/sdk";
-console.log(await ask("Who are you? One sentence.", { url: "wss://localhost:8089", profile: { model: "gpt-4o", provider: "openai", plugins: [] } }));
+console.log(await ask("Who are you? One sentence.", { url: "wss://localhost:8080", profile: { model: "gpt-4o", provider: "openai", plugins: [] } }));
 ```
 
 **Side by side.** Both are a few lines. Mastra constructs an agent object and runs it **in your process**; jaato opens an isolated session **on a daemon** and `ask`s. Comparable ceremony — the difference is *where the agent runs*, not how much code you write.
@@ -187,7 +187,7 @@ console.log(await s.ask("Delete temp.log"));
 
 **Side by side.** In Mastra, HITL is a **workflow** concern: you wrap the gated action in a step that `suspend()`s and a host that `resume()`s with the human's input (snapshotted to storage). In jaato it's **first-class on any agent turn**: the daemon asks before a gated tool and your `onPermission(ev)` returns `"y"`/`"n"`/`"a"`/… Omit the callback and a gated tool makes `s.ask()` throw `PermissionUnhandled` (auto-denied so the daemon never wedges). For *headless* sessions the same escalation can route to an out-of-band approval gate — see the resilience doc.
 
-**The deeper link — pausing a *cascade* for out-of-band approval.** `onPermission` assumes a client is connected to answer. But in jaato, tool-failure escalations are **bus events**, so a **reactor** can handle them with *nothing connected*. The reliability pattern (resilience doc): a **headless cascade stage** (Example 9) keeps failing a tool → the reliability reactor escalates → a reactor **parks the call on a `HandoffGate`** and requests approval **out-of-band** — e.g. a Telegram bot (via a webhook you wire) carrying the tool, its args, and which cascade stage asked → on **approve**, a second reactor flips deny→allow and **drives that same session's retry by id** — even if the runner was **unloaded** while waiting (it's reloaded by id, same session, no fork). So a long-running **cascade can pause mid-flight for a human and resume on approval**, hibernating in between — no client attached, no polling. And the pending approval (the **gate**) is durable: it survives a daemon restart, bounded by its TTL (an expired gate denies rather than hangs). Mastra's workflow `suspend`/`resume` does the same *shape*, but resumption runs in **your** process — you must be alive (and holding the run) to call `run.resume()`; jaato's pause → approve → resume is **daemon-side, out-of-band, and durable**. (A deployment pattern — opt-in premium reactors + a gate + an approval webhook you wire, not client SDK code; mechanism in the resilience doc.)
+**The deeper link — pausing a *cascade* for out-of-band approval.** `onPermission` assumes a client is connected to answer. But in jaato, tool-failure escalations are **bus events**, so a **reactor** can handle them with *nothing connected*. The reliability pattern (resilience doc): a **headless cascade stage** (Example 9) keeps failing a tool → the reliability reactor escalates → a reactor **parks the call on a `HandoffGate`** and requests approval **out-of-band** — e.g. a chat/notifier service (via a webhook you wire) carrying the tool, its args, and which cascade stage asked → on **approve**, a second reactor flips deny→allow and **drives that same session's retry by id** — even if the runner was **unloaded** while waiting (it's reloaded by id, same session, no fork). So a long-running **cascade can pause mid-flight for a human and resume on approval**, hibernating in between — no client attached, no polling. And the pending approval (the **gate**) is durable: it survives a daemon restart, bounded by its TTL (an expired gate denies rather than hangs). Mastra's workflow `suspend`/`resume` does the same *shape*, but resumption runs in **your** process — you must be alive (and holding the run) to call `run.resume()`; jaato's pause → approve → resume is **daemon-side, out-of-band, and durable**. (A deployment pattern — opt-in premium reactors + a gate + an approval webhook you wire, not client SDK code; mechanism in the resilience doc.)
 
 ## 8. Multi-agent / delegation
 

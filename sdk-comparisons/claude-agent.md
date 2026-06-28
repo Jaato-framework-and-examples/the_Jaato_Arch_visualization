@@ -194,7 +194,7 @@ async with IPCClient.session(
     print(await s.ask("Delete temp.log"))
 ```
 
-**Side by side.** These are almost the *same idea*: the Claude Agent SDK's `can_use_tool(tool_name, input, context)` returns `PermissionResultAllow`/`Deny` (with `permission_mode` presets like `acceptEdits`/`plan`/`bypassPermissions`), exactly like jaato's `on_permission(ev) → "y"/"n"`. Both run the decision **in your client**. jaato adds a daemon-side path the SDK has no analog for: for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook/Telegram bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc).
+**Side by side.** These are almost the *same idea*: the Claude Agent SDK's `can_use_tool(tool_name, input, context)` returns `PermissionResultAllow`/`Deny` (with `permission_mode` presets like `acceptEdits`/`plan`/`bypassPermissions`), exactly like jaato's `on_permission(ev) → "y"/"n"`. Both run the decision **in your client**. jaato adds a daemon-side path the SDK has no analog for: for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc).
 
 ## 8. Multi-agent / delegation
 
