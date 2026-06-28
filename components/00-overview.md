@@ -192,5 +192,5 @@ flowchart TD
 - `jaato/CLAUDE.md` — "Pre-warm Runner Pool", plugin system, profiles, provider catalog.
 - `jaato/jaato-server/server/__main__.py`, `session_manager.py` — daemon + session orchestration.
 - `jaato/jaato-server/shared/jaato_runtime.py`, `jaato_session.py` — the agent runtime core.
-- `jaato-premium/jaato_premium/reactors/` + `jaato/docs/design/cascade-as-client.md` + the reference deployment `kb-enablement-2.0/.jaato/reactors/orchestrator-cascade.json` — the reactor-driven cascade machinery (docs `09`/`10`).
+- `jaato-premium/jaato_premium/reactors/` + `jaato/docs/design/cascade-as-client.md` + the runnable reference cascade `examples/python-sdk/.jaato/reactors/cascade.json` — the reactor-driven cascade machinery (docs `09`/`10`).
 - Companion docs: `components/01`–`14` cover each layer in depth (this file is the map).
