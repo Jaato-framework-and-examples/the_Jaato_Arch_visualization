@@ -41,6 +41,8 @@ from jaato_sdk import ask
 print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}))
 ```
 
+**Runnable:** [`examples/python-sdk/ex01_basic_ask.py`](../examples/python-sdk/ex01_basic_ask.py)
+
 **Side by side.** The OpenAI SDK splits the *agent* (config) from the *run* — `Runner.run(agent, …)` drives the loop **in your process** and returns a `RunResult` (`.final_output`). jaato opens an isolated session on a (possibly auto-started) daemon and `ask`s. The agent runs *in your process* in one case, *behind a boundary* in the other.
 
 ## 2. Streaming the reply
@@ -61,6 +63,8 @@ async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "
     async for chunk in s.stream("Tell me a short story."):
         print(chunk, end="", flush=True)
 ```
+
+**Runnable:** [`examples/python-sdk/ex02_streaming.py`](../examples/python-sdk/ex02_streaming.py)
 
 **Side by side.** `Runner.run_streamed(...).stream_events()` yields a **typed event stream** — raw model deltas, run-item events (tool calls, handoffs), agent-updated events; you filter for the text deltas. jaato's `s.stream(...)` is an `AsyncIterable[str]` of model-output chunks that raises `AgentError`/`PermissionUnhandled` after it drains (the richer event stream is there too, via `s.client`).
 
@@ -84,6 +88,8 @@ async with IPCClient.session(agent="pirate", profile={"model": "gpt-4o", "provid
     print(await s.ask("And your name?"))          # same session → it remembers
 ```
 
+**Runnable:** [`examples/python-sdk/ex03_persona_memory.py`](../examples/python-sdk/ex03_persona_memory.py)
+
 **Side by side.** The OpenAI SDK makes memory an explicit `Session` you pass to each `Runner.run` (`SQLiteSession`/`SQLAlchemySession`/`RedisSession`/an OpenAI-native one), and it auto-stores/retrieves history. jaato keeps conversation state **in the daemon session**; a second `ask` continues it. A system prompt is a reusable **persona** (`agent="pirate"`), not constructor config.
 
 ## 4. Structured / typed output
@@ -106,6 +112,8 @@ async with IPCClient.session(profile="person-extractor") as s:
     person = await s.complete("Alice is 30.")   # dict | None (server-validated payload)
     print(person["name"], person["age"])
 ```
+
+**Runnable:** [`examples/python-sdk/ex04_typed_completion.py`](../examples/python-sdk/ex04_typed_completion.py)
 
 **Side by side.** The OpenAI SDK validates against a Pydantic `output_type` **in your process** — the run isn't "final" until the model emits the typed object. jaato makes typed output a **server-side completion gate**: the agent must call `signal_completion(payload)`, the daemon validates it and bounces a wrong-shape payload back to the model to retry — regardless of which client is connected. Under the hood both lean on **JSON Schema** at the model layer (the OpenAI SDK generates it from your Pydantic model; jaato authors it directly) and can use provider **strict / grammar-constrained decoding**; the difference is the OpenAI SDK validates with **Pydantic** in-process and hands you a **typed object**, while jaato validates **server-side with `jsonschema`** and hands you a **dict**.
 
@@ -137,6 +145,8 @@ async with IPCClient.session(
     print(await s.ask("Weather in Paris?"))
 ```
 
+**Runnable:** [`examples/python-sdk/ex05_client_tool.py`](../examples/python-sdk/ex05_client_tool.py)
+
 **Side by side.** The OpenAI SDK derives the tool schema from your function's hints/docstring (`@function_tool`) and runs the call inline in your process (it also ships **hosted tools** — web search, file search, computer use — that run on OpenAI's side). jaato's `client_tools` registers a schema **the daemon's agent loop invokes**, calling back into your client for the handler — the loop, retries, and result-threading happen server-side. (jaato can also use **server-side** plugins — `cli`, `web_search`, … — via the profile's `plugins`, with no client code; Example 6.)
 
 ## 6. Multi-tool agent loop
@@ -154,6 +164,8 @@ async with IPCClient.session(profile={
         "plugins": ["cli", "web_search", "file_edit", "todo"]}) as s:
     print(await s.ask("Plan a trip to Paris and save it to trip.md"))
 ```
+
+**Runnable:** [`examples/python-sdk/ex06_multitool.py`](../examples/python-sdk/ex06_multitool.py)
 
 **Side by side.** The OpenAI SDK's `Runner` runs the tool-calling loop **in your process** until the agent produces a final output (text with no tool calls). In jaato the loop — model → tool calls (permission-checked, parallelizable) → results → model — runs **inside the confined runner**; you choose the tools and `ask`. The loop is your dependency's code in one case, infrastructure in the other.
 
@@ -181,6 +193,8 @@ async with IPCClient.session(
         on_permission=lambda ev: "y" if approve(ev.tool_name) else "n") as s:
     print(await s.ask("Delete temp.log"))
 ```
+
+**Runnable:** [`examples/python-sdk/ex07_permissions.py`](../examples/python-sdk/ex07_permissions.py)
 
 **Side by side.** The OpenAI SDK's model is close in spirit: a `needs_approval` tool **pauses** the run and surfaces `ToolApprovalItem`s in `result.interruptions`; you capture a **resumable `RunState`** (`to_state()`), `approve`/`reject`, and re-run. It runs **in your process** — you hold the state and drive the resume (and `to_state()` can be serialised for an out-of-process UI). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
 
@@ -218,6 +232,8 @@ async with IPCClient.session(agent="lead",
     await done.wait()   # the daemon auto-continues 'lead' as each subagent COMPLETES
     print("".join(out))
 ```
+
+**Runnable:** [`examples/python-sdk/ex08_subagent.py`](../examples/python-sdk/ex08_subagent.py)
 
 **Side by side.** The OpenAI SDK's **handoffs** transfer *control* between agents — the lead exposes `transfer_to_researcher`/`transfer_to_writer` tools, the model decides when to hand off, and the receiving agent takes over the conversation, **all in your process**. jaato's delegation is **async and daemon-driven**: the lead persona calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** in its own context (a per-subagent isolated runner + cgroup is designed but not yet shipped), and its result returns as a `[SUBAGENT … COMPLETED]` event the daemon uses to auto-continue the lead until it composes and `signal_completion`s. Because that spans many turns, the facade one-shots don't fit — you wait on `s.client` for the final `SESSION_TERMINATED`. (How the lead knows the targets: its **persona** gives the *role*, the **first prompt** carries the *task*, and the `subagent` plugin's `list_subagent_profiles` discovers the available **profiles** from `.jaato/profiles/`.) The OpenAI SDK's handoff *transfers* control to one agent; jaato's lead *spawns* isolated subagents and synthesises — different shapes.
 
@@ -260,6 +276,8 @@ def execute(params, event, ctx):
         cascade_driver_id=read_cascade_driver_id(ctx.workspace_path))   # cid from the workspace cascade_state, not the event
 ```
 
+**Runnable:** [`examples/python-sdk/ex09_cascade.py`](../examples/python-sdk/ex09_cascade.py)
+
 **Side by side.** The OpenAI SDK has **no pipeline object** — sequential work is either *you* chaining `Runner.run` calls in code, or the *model* routing via handoffs; both run **in your process**. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** reacts to that completion and spawns the successor (threading the prior stage's typed payload into a freed warm slot). The client only triggers stage 1; the pipeline then runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated/observable, and you branch or fan out by adding **rules, not code**. *(A client `for`-loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse — see the cascade docs.)*
 
 ## 10. Production: persistence, recovery, observability
@@ -281,6 +299,8 @@ async with IPCRecoveryClient.session(
     print(await s.ask("Long task…"))                            # survives a daemon bounce
 # sessions also persist server-side: detach (fire-and-forget) and re-attach by id with the low-level client.
 ```
+
+**Runnable:** [`examples/python-sdk/ex10_recovery.py`](../examples/python-sdk/ex10_recovery.py)
 
 **Side by side.** The OpenAI SDK gives you **first-class tracing** (on by default, exportable via OTel) and pluggable **session** persistence + **guardrails** — but the run and durability live **in your process / your store**. jaato inherits durability from the **daemon**: `IPCRecoveryClient` auto-reconnects and recovers an in-flight turn across a restart; sessions persist server-side and re-attach by id; OpenTelemetry tracing is a daemon flag. Plus what the OpenAI SDK runs in-process, jaato runs in its **own AppArmor-confinable, workspace-scoped subprocess**.
 
