@@ -31,7 +31,7 @@ A growing series — this first iteration covers LangChain; the rest are planned
 | **Agno** | ✅ available | [agno](sdk-comparisons/agno.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → Teams → workflow/cascade → production |
 | **Strands** | ✅ available | [strands](sdk-comparisons/strands.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → graph/cascade → production |
 | **OpenAI Agents SDK** | ✅ available | [openai-agents](sdk-comparisons/openai-agents.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → handoffs → cascade → production |
-| **Claude Agent SDK** | planned | — |
+| **Claude Agent SDK** | ✅ available | [claude-agent](sdk-comparisons/claude-agent.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → subagents → cascade → production |
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
 **git-ignored — not part of this repo** (two are private):
