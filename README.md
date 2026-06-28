@@ -14,14 +14,14 @@ the_Jaato_Arch_visualization/        # this repo
 ├── README.md            ← this index
 ├── TEMPLATE.md          ← the shared section structure + style spec every doc follows
 ├── components/          ← the 24 standalone component docs (00 overview + 01–23)
-└── sdk-comparisons/     ← usage-oriented, example-based SDK comparisons vs other frameworks
+├── sdk-comparisons/     ← usage-oriented, example-based SDK comparisons vs other frameworks
+└── platform-comparisons/ ← jaato vs agent *platforms* (API + architecture, not SDK usage)
 ```
 
 ## SDK comparisons
 
 A separate genre from the architecture docs above: **side-by-side, example-driven** SDK-usage
-comparisons of jaato-sdk against other agent frameworks (10 examples each, simplest → most complex).
-A growing series — this first iteration covers LangChain; the rest are planned:
+comparisons of jaato-sdk against other agent frameworks (10 examples each, simplest → most complex):
 
 | Framework | Status | Doc |
 |-----------|--------|-----|
@@ -32,6 +32,16 @@ A growing series — this first iteration covers LangChain; the rest are planned
 | **Strands** | ✅ available | [strands](sdk-comparisons/strands.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → graph/cascade → production |
 | **OpenAI Agents SDK** | ✅ available | [openai-agents](sdk-comparisons/openai-agents.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → handoffs → cascade → production |
 | **Claude Agent SDK** | ✅ available | [claude-agent](sdk-comparisons/claude-agent.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → subagents → cascade → production |
+
+## Platform comparisons
+
+A different shape: agent **platforms / IDEs** (not build-an-agent SDKs) compared against jaato on their **API + architecture** rather than 10 code examples — because there's no `Agent(...)` to write next to jaato's.
+
+| Platform | Status | Doc |
+|----------|--------|-----|
+| **Ona** (ex-Gitpod, now OpenAI) | ✅ available | [ona](platform-comparisons/ona.md) — managed cloud agent platform vs self-hosted daemon: launch / poll / steer / stop background agents, automations, environments & isolation |
+| **Kiro** (AWS agentic IDE) | planned | — |
+| **Intent** (Augment Code) | planned | — |
 
 The docs are grounded in three source trees that are cloned **locally** for reference and are
 **git-ignored — not part of this repo** (two are private):
