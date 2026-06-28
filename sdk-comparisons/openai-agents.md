@@ -9,7 +9,7 @@ So the OpenAI SDK gives you a minimal, composable agent that lives in your proce
 
 > **Setup.** OpenAI Agents SDK: `pip install openai-agents` (`from agents import Agent, Runner, function_tool, SQLiteSession`). jaato-sdk: `pip install jaato-sdk` + a reachable daemon. The facade front door: `from jaato_sdk import IPCClient, IPCRecoveryClient, ask, AgentError, PermissionUnhandled`. All jaato calls are `async`; `Runner.run` is async (`Runner.run_sync` for sync).
 
-`IPCClient.session(...)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0`). It forwards `profile` / `agent` / `cascade_driver_id` to the session, so both the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …}`) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` and **raise** on failure (`AgentError`, `PermissionUnhandled`). `s.client` exposes the underlying low-level client for mixing high- and low-level calls on one session.
+`IPCClient.session(...)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0`). It forwards `profile` / `agent` / `cascade_driver_id` to the session, so both the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …, "plugins": []}` — an inline spec needs an explicit `plugins` key; `[]` = the minimal framework set) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` and **raise** on failure (`AgentError`, `PermissionUnhandled`). `s.client` exposes the underlying low-level client for mixing high- and low-level calls on one session.
 
 ---
 
@@ -30,7 +30,7 @@ import asyncio
 from jaato_sdk import IPCClient
 
 async def main():
-    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai"}) as s:
+    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
         print(await s.ask("Who are you? One sentence."))
 
 asyncio.run(main())
@@ -38,7 +38,7 @@ asyncio.run(main())
 …or the one-shot module helper:
 ```python
 from jaato_sdk import ask
-print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai"}))
+print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}))
 ```
 
 **Side by side.** The OpenAI SDK splits the *agent* (config) from the *run* — `Runner.run(agent, …)` drives the loop **in your process** and returns a `RunResult` (`.final_output`). jaato opens an isolated session on a (possibly auto-started) daemon and `ask`s. The agent runs *in your process* in one case, *behind a boundary* in the other.
@@ -57,7 +57,7 @@ async for event in result.stream_events():
 
 **jaato-sdk**
 ```python
-async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai"}) as s:
+async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
     async for chunk in s.stream("Tell me a short story."):
         print(chunk, end="", flush=True)
 ```
@@ -79,7 +79,7 @@ print((await Runner.run(agent, "And your name?", session=session)).final_output)
 **jaato-sdk** — the **session is the memory**; the system prompt is a persona file:
 ```python
 # persona lives in .jaato/agents/pirate.md (the system instructions), referenced by name:
-async with IPCClient.session(agent="pirate", profile={"model": "gpt-4o", "provider": "openai"}) as s:
+async with IPCClient.session(agent="pirate", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
     await s.ask("Hello")
     print(await s.ask("And your name?"))          # same session → it remembers
 ```
@@ -127,7 +127,7 @@ print((await Runner.run(agent, "Weather in Paris?")).final_output)
 **jaato-sdk** — a client-provided ("host") tool the daemon calls back into:
 ```python
 async with IPCClient.session(
-        profile={"model": "gpt-4o", "provider": "openai"},
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": []},
         client_tools=[{
             "name": "get_weather", "description": "Return the weather for a city.",
             "parameters": {"type": "object",
@@ -270,7 +270,7 @@ await Runner.run(agent, "Long task…", session=SQLiteSession("c1", "conv.db"))
 ```python
 from jaato_sdk import IPCRecoveryClient
 async with IPCRecoveryClient.session(
-        profile={"model": "gpt-4o", "provider": "openai"},
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": []},
         on_status_change=lambda st: print(st.state)) as s:      # auto-reconnect across daemon restarts
     print(await s.ask("Long task…"))                            # survives a daemon bounce
 # sessions also persist server-side: detach (fire-and-forget) and re-attach by id with the low-level client.

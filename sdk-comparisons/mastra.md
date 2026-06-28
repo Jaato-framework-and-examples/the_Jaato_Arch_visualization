@@ -9,7 +9,7 @@ Ten worked examples, simplest first, each shown in **Mastra** and **jaato-sdk** 
 
 > **Setup.** Mastra: `npm i @mastra/core @ai-sdk/openai zod` (+ `@mastra/memory @mastra/libsql` for memory). jaato-sdk: `npm i @jaato/sdk` + a reachable daemon (`wss://…`). The facade front door: `import { JaatoClient, ask, AgentError, PermissionUnhandled } from "@jaato/sdk"`. The jaato `Session` is an **`AsyncDisposable`**, so the idiomatic form is `await using` (Node 20.4+ / TS 5.2+; add `ESNext.Disposable` to your tsconfig `lib`) — an explicit `await s.close()` works on older runtimes.
 
-`JaatoClient.session(...)` defaults the load-bearing knobs (`clientType: "api"` so completion works headless; the connection is a `url` + `token`, no daemon autostart — a WS client doesn't spin one up). It forwards `profile` / `agent` / `cascadeDriverId` to the session, so both the declarative style (`profile: "researcher"`, named assets in `.jaato/`) and the programmatic style (`profile: { model, provider }`) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` (so a plain turn never hangs) and **throw** on failure (`AgentError` on an error terminal, `PermissionUnhandled` if a gated tool goes unanswered). And the facade is **not all-or-nothing**: `s.client` exposes the underlying low-level client, so you can mix `ask`/`complete`/`stream` with raw event-API calls (`s.client.subscribe(EventTypeValue.…)`) on the same session.
+`JaatoClient.session(...)` defaults the load-bearing knobs (`clientType: "api"` so completion works headless; the connection is a `url` + `token`, no daemon autostart — a WS client doesn't spin one up). It forwards `profile` / `agent` / `cascadeDriverId` to the session, so both the declarative style (`profile: "researcher"`, named assets in `.jaato/`) and the programmatic style (`profile: { model, provider, plugins: [] }` — an inline spec needs an explicit `plugins` key; `[]` = the minimal framework set) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` (so a plain turn never hangs) and **throw** on failure (`AgentError` on an error terminal, `PermissionUnhandled` if a gated tool goes unanswered). And the facade is **not all-or-nothing**: `s.client` exposes the underlying low-level client, so you can mix `ask`/`complete`/`stream` with raw event-API calls (`s.client.subscribe(EventTypeValue.…)`) on the same session.
 
 ---
 
@@ -31,14 +31,14 @@ import { JaatoClient } from "@jaato/sdk";
 
 await using s = await JaatoClient.session({
   url: "wss://localhost:8089",
-  profile: { model: "gpt-4o", provider: "openai" },
+  profile: { model: "gpt-4o", provider: "openai", plugins: [] },
 });
 console.log(await s.ask("Who are you? One sentence."));
 ```
 …or the one-shot module helper, for a throwaway call:
 ```ts
 import { ask } from "@jaato/sdk";
-console.log(await ask("Who are you? One sentence.", { url: "wss://localhost:8089", profile: { model: "gpt-4o", provider: "openai" } }));
+console.log(await ask("Who are you? One sentence.", { url: "wss://localhost:8089", profile: { model: "gpt-4o", provider: "openai", plugins: [] } }));
 ```
 
 **Side by side.** Both are a few lines. Mastra constructs an agent object and runs it **in your process**; jaato opens an isolated session **on a daemon** and `ask`s. Comparable ceremony — the difference is *where the agent runs*, not how much code you write.
@@ -53,7 +53,7 @@ for await (const chunk of stream.textStream) process.stdout.write(chunk);
 
 **jaato-sdk**
 ```ts
-await using s = await JaatoClient.session({ url, profile: { model: "gpt-4o", provider: "openai" } });
+await using s = await JaatoClient.session({ url, profile: { model: "gpt-4o", provider: "openai", plugins: [] } });
 for await (const chunk of s.stream("Tell me a short story.")) process.stdout.write(chunk);
 ```
 
@@ -78,7 +78,7 @@ console.log((await agent.generate("And your name?", ctx)).text);   // same threa
 **jaato-sdk** — the **session is the memory**; the system prompt is a persona file:
 ```ts
 // persona lives in .jaato/agents/pirate.md (the system instructions), referenced by name:
-await using s = await JaatoClient.session({ url, agent: "pirate", profile: { model: "gpt-4o", provider: "openai" } });
+await using s = await JaatoClient.session({ url, agent: "pirate", profile: { model: "gpt-4o", provider: "openai", plugins: [] } });
 await s.ask("Hello");
 console.log(await s.ask("And your name?"));        // same session → it remembers
 ```
@@ -126,7 +126,7 @@ console.log((await agent.generate("Weather in Paris?")).text);
 **jaato-sdk** — a client-provided ("host") tool the daemon calls back into, passed as `clientTools`:
 ```ts
 await using s = await JaatoClient.session({
-  url, profile: { model: "gpt-4o", provider: "openai" },
+  url, profile: { model: "gpt-4o", provider: "openai", plugins: [] },
   clientTools: [{
     name: "get_weather", description: "Return the weather for a city.",
     parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
@@ -282,7 +282,7 @@ export const mastra = new Mastra({
 **jaato-sdk** — durability/recovery/tracing are daemon properties; recovery is a session option:
 ```ts
 await using s = await JaatoClient.session({
-  url, profile: { model: "gpt-4o", provider: "openai" },
+  url, profile: { model: "gpt-4o", provider: "openai", plugins: [] },
   recovery: {},                                             // auto-reconnect across daemon restarts
   onStatusChange: (st) => console.log(st.state),            // reconnecting / connected / closed
 });
