@@ -182,7 +182,7 @@ async with IPCClient.session(
     print(await s.ask("Delete temp.log"))
 ```
 
-**Side by side.** The OpenAI SDK's model is close in spirit: a `needs_approval` tool **pauses** the run and surfaces `ToolApprovalItem`s in `result.interruptions`; you capture a **resumable `RunState`** (`to_state()`), `approve`/`reject`, and re-run. It runs **in your process** — you hold the state and drive the resume (and `to_state()` can be serialised for an out-of-process UI). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook/Telegram bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
+**Side by side.** The OpenAI SDK's model is close in spirit: a `needs_approval` tool **pauses** the run and surfaces `ToolApprovalItem`s in `result.interruptions`; you capture a **resumable `RunState`** (`to_state()`), `approve`/`reject`, and re-run. It runs **in your process** — you hold the state and drive the resume (and `to_state()` can be serialised for an out-of-process UI). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
 
 ## 8. Multi-agent / delegation
 
@@ -237,6 +237,12 @@ async with IPCClient.session(agent="extract", profile="extract",   # persona (so
                              cascade_driver_id=cid) as s:
     await s.complete("Extract the facts from this doc: …")          # stage 1's first message (its task)
 ```
+For the typed handoff to work, the **producer's profile must declare a `completion_payload_schema`** — without it `signal_completion` is a legacy summary and `event.get("facts")` below is `None`:
+```yaml
+# .jaato/profiles/extract.yaml (excerpt)
+completion_payload_schema: { type: object, properties: { facts: { type: string } }, required: [facts] }
+# → the extract agent then calls signal_completion(facts="…")  — a schema's top-level props are FLAT args, not wrapped
+```
 A **deployment reactor** (`.jaato/reactors/` + `.jaato/scripts/`) spawns each next stage inside the daemon when the prior one completes:
 ```jsonc
 // .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
@@ -280,17 +286,17 @@ async with IPCRecoveryClient.session(
 
 ---
 
-## When each shines
+## Coming from the OpenAI Agents SDK
 
-| You want… | Reach for |
-|---|---|
-| A minimal, composable agent in Python — instructions + tools + **handoffs**, with built-in tracing and guardrails | **OpenAI Agents SDK** |
-| LLM-driven multi-agent coordination via **handoffs** (one agent transfers control to another) | **OpenAI Agents SDK** |
-| Tight first-party OpenAI integration (hosted tools, Traces dashboard) while staying model-flexible | **OpenAI Agents SDK** |
-| Multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / event-driven cascades / crash-recovery; provider- and runtime-agnostic (local GPUs); server-enforced typed completion gates; a thin client with per-agent memory isolated in AppArmor-confinable server-side runners | **jaato-sdk** |
+Not a scorecard — if you already think in the OpenAI Agents SDK, here's what actually changes when you move to jaato, and what it buys you:
 
-**Honest caveats.**
-- Both sides are Python, so this is a genuine same-language comparison.
-- **The OpenAI Agents SDK is young and moving** (and HITL/tool-approval landed recently). The snippets use the current API (`Runner.run`/`run_streamed`, `final_output`, `output_type`, `@function_tool`, `Session`, `handoffs`, `needs_approval`/`interruptions`/`to_state`); verify exact signatures against the version you install. It's OpenAI-first; non-OpenAI models work via the provider/LiteLLM integrations.
-- **jaato-sdk needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency the in-process library doesn't have; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The facade keeps the common path to one `async with`.
+- **`output_type` becomes a server-enforced completion gate.** A Pydantic `output_type` validates the final output **in your process** — the run isn't "final" until the model emits the typed object. jaato's `completion_payload_schema` makes the agent call `signal_completion(payload)` and validates it *server-side* with `jsonschema`, bouncing a wrong-shape payload back to the model to retry — regardless of which client is attached. Same instinct, enforced at the boundary (you get a validated dict, not a typed `BaseModel`).
+- **Your in-process `Runner` loop becomes an isolated daemon session.** `Runner.run` drives the model→tool→model loop **in your process** and hands back a `RunResult`; jaato opens a **session** on a long-lived daemon and `ask`s, and the loop — permission-checked, parallelizable tool calls — runs **inside a workspace-scoped, AppArmor-confinable subprocess**. Conversation state isn't a `Session` you thread through every call; it *is* the daemon session, so a second `ask` just continues it, and a system prompt is a reusable **persona** file, not constructor config.
+- **Handoffs become daemon-driven spawn-isolated-subagents and reactor cascades.** A handoff *transfers control* between agents (the SDK adds `transfer_to_*` tools and the receiving agent takes over the conversation, all in-process). jaato's lead persona instead calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs server-side in its own context and returns a `[SUBAGENT … COMPLETED]` event the daemon uses to auto-continue the lead. Multi-stage work that you'd chain with `Runner.run` calls (or let the model route via handoffs) becomes an **event- and reactor-driven cascade**: each stage is an ignorant, isolated headless session that just signals 'done', and a reactor spawns the successor — you branch and fan out by adding **rules, not code**, and the pipeline survives the client disconnecting.
+- **`needs_approval`/interruptions and tracing/Sessions become daemon properties.** A `needs_approval` tool pauses the run into `result.interruptions`; you capture a resumable `RunState`, `approve`/`reject`, and re-run — you hold the state and drive the resume. jaato answers inline via `on_permission`, but for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached**. Likewise, tracing, durability, and persistence stop being your-process/your-store concerns: `IPCRecoveryClient` auto-reconnects and recovers an in-flight turn across a daemon restart, sessions persist server-side and re-attach by id, and OpenTelemetry is a daemon flag — and OpenAI-first becomes provider/runtime-agnostic, including local GPUs.
+
+**What to keep in mind (honest trade-offs).**
+- Both sides are Python, so this is a genuine same-language move — what changes is the runtime model, not the language.
+- **The OpenAI Agents SDK is young and moving** (HITL/tool-approval landed recently). The snippets above use the current API (`Runner.run`/`run_streamed`, `final_output`, `output_type`, `@function_tool`, `Session`, `handoffs`, `needs_approval`/`interruptions`/`to_state`); verify exact signatures against the version you install. It's OpenAI-first, with non-OpenAI models reached through the provider/LiteLLM integrations — jaato is provider- and runtime-agnostic out of the gate.
+- **jaato-sdk needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency the in-process library doesn't have; for a fleet of isolated, recoverable, multi-tenant agents it's the whole point. The facade keeps the common path to one `async with`.
 - Different runtime models: the OpenAI SDK runs **your** agent code (and tools) in your process; jaato runs agents as **isolated subprocesses** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app.

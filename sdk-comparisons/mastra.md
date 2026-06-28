@@ -30,7 +30,7 @@ console.log(res.text);
 import { JaatoClient } from "@jaato/sdk";
 
 await using s = await JaatoClient.session({
-  url: "wss://localhost:8089",
+  url: "wss://localhost:8080",
   profile: { model: "gpt-4o", provider: "openai", plugins: [] },
 });
 console.log(await s.ask("Who are you? One sentence."));
@@ -38,7 +38,7 @@ console.log(await s.ask("Who are you? One sentence."));
 …or the one-shot module helper, for a throwaway call:
 ```ts
 import { ask } from "@jaato/sdk";
-console.log(await ask("Who are you? One sentence.", { url: "wss://localhost:8089", profile: { model: "gpt-4o", provider: "openai", plugins: [] } }));
+console.log(await ask("Who are you? One sentence.", { url: "wss://localhost:8080", profile: { model: "gpt-4o", provider: "openai", plugins: [] } }));
 ```
 
 **Side by side.** Both are a few lines. Mastra constructs an agent object and runs it **in your process**; jaato opens an isolated session **on a daemon** and `ask`s. Comparable ceremony — the difference is *where the agent runs*, not how much code you write.
@@ -187,7 +187,7 @@ console.log(await s.ask("Delete temp.log"));
 
 **Side by side.** In Mastra, HITL is a **workflow** concern: you wrap the gated action in a step that `suspend()`s and a host that `resume()`s with the human's input (snapshotted to storage). In jaato it's **first-class on any agent turn**: the daemon asks before a gated tool and your `onPermission(ev)` returns `"y"`/`"n"`/`"a"`/… Omit the callback and a gated tool makes `s.ask()` throw `PermissionUnhandled` (auto-denied so the daemon never wedges). For *headless* sessions the same escalation can route to an out-of-band approval gate — see the resilience doc.
 
-**The deeper link — pausing a *cascade* for out-of-band approval.** `onPermission` assumes a client is connected to answer. But in jaato, tool-failure escalations are **bus events**, so a **reactor** can handle them with *nothing connected*. The reliability pattern (resilience doc): a **headless cascade stage** (Example 9) keeps failing a tool → the reliability reactor escalates → a reactor **parks the call on a `HandoffGate`** and requests approval **out-of-band** — e.g. a Telegram bot (via a webhook you wire) carrying the tool, its args, and which cascade stage asked → on **approve**, a second reactor flips deny→allow and **drives that same session's retry by id** — even if the runner was **unloaded** while waiting (it's reloaded by id, same session, no fork). So a long-running **cascade can pause mid-flight for a human and resume on approval**, hibernating in between — no client attached, no polling. And the pending approval (the **gate**) is durable: it survives a daemon restart, bounded by its TTL (an expired gate denies rather than hangs). Mastra's workflow `suspend`/`resume` does the same *shape*, but resumption runs in **your** process — you must be alive (and holding the run) to call `run.resume()`; jaato's pause → approve → resume is **daemon-side, out-of-band, and durable**. (A deployment pattern — opt-in premium reactors + a gate + an approval webhook you wire, not client SDK code; mechanism in the resilience doc.)
+**The deeper link — pausing a *cascade* for out-of-band approval.** `onPermission` assumes a client is connected to answer. But in jaato, tool-failure escalations are **bus events**, so a **reactor** can handle them with *nothing connected*. The reliability pattern (resilience doc): a **headless cascade stage** (Example 9) keeps failing a tool → the reliability reactor escalates → a reactor **parks the call on a `HandoffGate`** and requests approval **out-of-band** — e.g. a chat/notifier service (via a webhook you wire) carrying the tool, its args, and which cascade stage asked → on **approve**, a second reactor flips deny→allow and **drives that same session's retry by id** — even if the runner was **unloaded** while waiting (it's reloaded by id, same session, no fork). So a long-running **cascade can pause mid-flight for a human and resume on approval**, hibernating in between — no client attached, no polling. And the pending approval (the **gate**) is durable: it survives a daemon restart, bounded by its TTL (an expired gate denies rather than hangs). Mastra's workflow `suspend`/`resume` does the same *shape*, but resumption runs in **your** process — you must be alive (and holding the run) to call `run.resume()`; jaato's pause → approve → resume is **daemon-side, out-of-band, and durable**. (A deployment pattern — opt-in premium reactors + a gate + an approval webhook you wire, not client SDK code; mechanism in the resilience doc.)
 
 ## 8. Multi-agent / delegation
 
@@ -247,6 +247,12 @@ const cid = randomUUID();
 await using s = await JaatoClient.session({ url, agent: "extract", profile: "extract", cascadeDriverId: cid });
 await s.complete("Extract the facts from this doc: …");   // stage 1's first message (its task)
 ```
+For the typed handoff to work, the **producer's profile must declare a `completion_payload_schema`** — without it `signal_completion` is a legacy summary and `event.get("facts")` below is `None`:
+```yaml
+# .jaato/profiles/extract.yaml (excerpt)
+completion_payload_schema: { type: object, properties: { facts: { type: string } }, required: [facts] }
+# → the extract agent then calls signal_completion(facts="…")  — a schema's top-level props are FLAT args, not wrapped
+```
 The hop lives in a **deployment reactor** that runs **inside the daemon** (Python, regardless of your client language) — `.jaato/reactors/` + `.jaato/scripts/`:
 ```jsonc
 // .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
@@ -294,17 +300,18 @@ console.log(await s.ask("Long task…"));                      // survives a dae
 
 ---
 
-## When each shines
+## Coming from Mastra
 
-| You want… | Reach for |
-|---|---|
-| One type-safe TS codebase with the whole toolkit in-process (agents, tools, workflows, memory, RAG, evals) | **Mastra** |
-| A typed, inspectable workflow graph with `suspend`/`resume` and a dev playground | **Mastra** |
-| The Vercel AI SDK / Node ecosystem and rapid DX | **Mastra** |
-| Multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / cascades / crash-recovery; provider- and runtime-agnostic (local GPUs); typed completion gates; a thin client with bounded per-agent memory | **jaato-sdk** |
+Not a scorecard — if you already think in Mastra, here's what actually changes when you move to jaato, and what it buys you:
 
-**Honest caveats.**
-- Both sides are TypeScript, so these examples are a genuine same-language comparison.
+- **Your Zod output schema becomes a server-enforced completion gate.** In Mastra you pass `structuredOutput: { schema: z.object(...) }` and validate the model's reply *in your process* (`res.object`). jaato moves that to the boundary: a profile's `completion_payload_schema` is checked *server-side* — the agent must `signal_completion(payload)`, the daemon validates it (and runs completion processors), and `s.complete()` hands you the validated payload or `null`. A wrong-shape payload is bounced back to the model to retry; the agent can't "finish" off-shape, no matter which client is attached.
+- **Your in-process `agent.generate` becomes an isolated daemon session over WebSocket.** A Mastra `Agent` lives in your Node process; `JaatoClient.session({ url: "wss://…", ... })` opens a session on a daemon where the agent runs as a **permission-gated, workspace-scoped subprocess**. The conversation *is* the session (a second `s.ask` just continues it), the system prompt is a reusable **persona** (`agent: "pirate"`) instead of constructor config, and the loop/memory/isolation live behind the boundary rather than in your app. The TS `Session` is an `AsyncDisposable` (`await using`), so cleanup is a scope, not a lifecycle you manage.
+- **You stop wiring the agent loop and provider plumbing.** Mastra runs the ReAct loop inside `agent.generate` (bounded by `stopWhen`) on top of the Vercel AI SDK; client-side tools execute inline in your process. In jaato the loop — model → permission-checked tool calls → results → model — runs inside the confined runner. Server-side tool **plugins** (`cli`, `web_search`, `file_edit`, …) need no client glue at all, and you're **provider- and runtime-agnostic**: swap `provider`/`model` (including local GPUs) without touching app code. HITL is first-class on any turn — an `onPermission(ev)` callback returns `"y"`/`"n"`/`"a"` — not something you hand-build as a workflow step.
+- **Mastra workflows and `suspend`/`resume` become reactor-driven, server-side cascades with durable HITL gates.** A Mastra `Workflow` is a typed graph **you** drive in-process; resuming a suspended run means *you* are alive holding the run to call `run.resume()`. A jaato cascade is **event- and reactor-driven inside the daemon**: each stage is an isolated headless session that just `signal_completion`s 'done', and a reactor reacts to that event and spawns the successor, threading the typed payload forward. The client only triggers stage 1 — the pipeline survives the client disconnecting, and you branch or fan out by adding **rules, not code**. The pause-for-a-human case is durable too: an approval can park on a `HandoffGate` that outlives a daemon restart (bounded by its TTL) and drive the same session's retry by id even if the runner was unloaded while waiting.
+
+**What to keep in mind (honest trade-offs).**
+- Both sides are TypeScript, so these examples are a genuine same-language comparison — none of the change above is "switch languages," it's "move the agent across a boundary."
+- **jaato-sdk needs a running daemon** and a WS endpoint (`wss://…` + token); it doesn't autostart one (unlike the Python SDK's local-IPC autostart). For a single throwaway script that's a real dependency; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The `await using` facade needs Node 20.4+ / TS 5.2+ (an explicit `close()` works otherwise).
+- Different runtime models: Mastra runs **your** agent code (and tools) in your Node process/server; jaato runs agents as **isolated subprocesses** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app. That isolation is also remoteness — your calls cross a WebSocket to a daemon you have to run and reach, rather than executing inline.
 - **Mastra's API is still moving** — v1.0 landed January 2026, and there are legacy methods (`generateLegacy`/`streamLegacy`, the deprecated `AgentNetwork`) and v1-beta docs in circulation. The snippets use the current v1 surface; verify exact signatures (especially the workflow run/`resume` and `stream` options) against the version you install.
-- **jaato-sdk needs a running daemon** and a WS endpoint (`wss://…` + token); it doesn't autostart one (unlike the Python SDK's local-IPC autostart). For a single throwaway script that's a real dependency; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The `await using` facade needs Node 20.4+ / TS 5.2+ (explicit `close()` otherwise).
-- Different runtime models: Mastra runs **your** agent code (and tools) in your Node process/server; jaato runs agents as **isolated subprocesses** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app.
+- You give up Mastra's in-process conveniences as in-process things: observability is a **daemon** property (OpenTelemetry is a daemon flag, not the Mastra `observability` config wired into your app), and there's no local `mastra dev` playground or in-codebase typed workflow graph to inspect — the orchestration lives in `.jaato/` reactors and runs server-side.

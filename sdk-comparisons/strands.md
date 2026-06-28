@@ -176,7 +176,7 @@ async with IPCClient.session(
     print(await s.ask("Delete temp.log"))
 ```
 
-**Side by side.** Strands intercepts tool calls at the **agent-loop level** via its hook system — a `BeforeToolCallEvent` hook can raise an **interrupt** to pause for human approval and resume, all **in your process** (you handle the interrupt and continue). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook/Telegram bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
+**Side by side.** Strands intercepts tool calls at the **agent-loop level** via its hook system — a `BeforeToolCallEvent` hook can raise an **interrupt** to pause for human approval and resume, all **in your process** (you handle the interrupt and continue). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
 
 ## 8. Multi-agent / delegation
 
@@ -237,6 +237,12 @@ async with IPCClient.session(agent="extract", profile="extract",   # persona (so
                              cascade_driver_id=cid) as s:
     await s.complete("Extract the facts from this doc: …")          # stage 1's first message (its task)
 ```
+For the typed handoff to work, the **producer's profile must declare a `completion_payload_schema`** — without it `signal_completion` is a legacy summary and `event.get("facts")` below is `None`:
+```yaml
+# .jaato/profiles/extract.yaml (excerpt)
+completion_payload_schema: { type: object, properties: { facts: { type: string } }, required: [facts] }
+# → the extract agent then calls signal_completion(facts="…")  — a schema's top-level props are FLAT args, not wrapped
+```
 A **deployment reactor** (`.jaato/reactors/` + `.jaato/scripts/`) spawns each next stage inside the daemon when the prior one completes:
 ```jsonc
 // .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
@@ -280,17 +286,19 @@ async with IPCRecoveryClient.session(
 
 ---
 
-## When each shines
+## Coming from Strands
 
-| You want… | Reach for |
-|---|---|
-| A minimal, **model-driven** agent in Python — a prompt + tools, the model drives the loop, little scaffolding | **Strands Agents** |
-| A *menu* of multi-agent topologies (agents-as-tools, Swarm, Graph, Workflow) you compose yourself | **Strands Agents** |
-| First-class AWS / Bedrock integration (while staying "any model, any cloud") | **Strands Agents** |
-| Multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / cascades / crash-recovery; provider- and runtime-agnostic (local GPUs); server-enforced typed completion gates; a thin client with per-agent memory isolated in AppArmor-confinable server-side runners | **jaato-sdk** |
+Not a scorecard — if you already think in Strands, here's what actually changes when you move to jaato, and what it buys you:
 
-**Honest caveats.**
-- Both sides are Python, so this is a genuine same-language comparison.
-- **Strands is young and moving** (open-sourced 2025, v1.0 in 2025). The snippets use the current API (`Agent(...)`, `stream_async`, `structured_output`, `@tool`, `SessionManager`, the hooks/interrupts HITL, `GraphBuilder`); verify exact signatures (especially the interrupts and multi-agent APIs) against the version you install. Its default model is **Amazon Bedrock** — pass a `model=` for OpenAI/Anthropic/Ollama/local.
-- **jaato-sdk needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency the in-process SDK doesn't have; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The facade keeps the common path to one `async with`.
-- Different runtime models: Strands runs **your** agent code (and tools) in your process; jaato runs agents as **isolated subprocesses** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app.
+- **`structured_output` becomes a server-enforced completion gate.** `agent.structured_output(Model, …)` constrains the model and validates with **Pydantic in your process**, handing back a typed object; jaato's `completion_payload_schema` makes the agent call `signal_completion(payload)`, the **daemon** validates it with `jsonschema` and bounces a wrong-shape payload back to the model to retry — the agent literally can't "finish" off-shape regardless of which client is attached. Same instinct, enforced at the boundary (you get a validated **dict**, not a typed object).
+- **Your in-process callable `Agent` becomes an isolated daemon session.** `agent("…")` runs the model-driven loop *inside your process* with your conversation in the `Agent`'s `messages`; jaato opens a **session on a long-lived daemon** where state lives server-side and each agent runs in its **own AppArmor-confinable, workspace-scoped subprocess**. A persona file (`agent="pirate"`) replaces constructor config, and the session *is* the memory — a tool crash or memory blowup is contained server-side, not in your app. It's also **provider- and runtime-agnostic** (OpenAI / Anthropic / local GPUs), with no Bedrock default to override.
+- **You stop wiring the agent loop and the multi-agent topologies yourself.** Strands' premise is that *you* assemble the loop and pick from a menu — agents-as-tools, **Swarm**, **Graph**, **Workflow** — all running in your process and driven by your code. In jaato the loop (model → permission-checked tool calls → results → model) is **infrastructure inside the confined runner**; delegation is **async + daemon-driven** (a supervisor persona `spawn_subagent`s and ends its turn, the daemon auto-continues it as each specialist completes); and a multi-stage pipeline isn't a `Graph` you drive but an **event- + reactor-driven cascade** — each stage an isolated headless session that just `signal_completion`s 'done', with reactors spawning the successor server-side. You branch and fan out by adding **rules, not code**, and the pipeline survives the client disconnecting.
+- **Hooks/interrupts HITL becomes daemon-side permissions and out-of-band gates.** A Strands `BeforeToolCallEvent` hook raising an `interrupt()` pauses the loop **in your process** and you resume it; jaato's permissions are **built-in** — `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor parks on a `HandoffGate` to ask a human **out-of-band** (a webhook bridge), then drives the same session's retry by id — pause→approve→resume with **no client attached**. Durability and recovery come the same way: `IPCRecoveryClient` auto-reconnects across a daemon bounce, sessions persist server-side and re-attach by id.
+
+**What to keep in mind (honest trade-offs).**
+- Both sides are Python, so this is a genuine same-language move — no FFI or language switch to absorb.
+- **jaato-sdk needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency the in-process Strands SDK doesn't have; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The facade keeps the common path to one `async with`.
+- The runtime model genuinely differs: Strands runs **your** agent code (and tools) *in your process*; jaato runs agents as **isolated subprocesses** behind the daemon. That isolation is the win, but it's also the cost — there's a boundary (and a `client_tools` callback hop for host tools) where Strands just calls a function inline.
+- **Strands is young and fast-moving** (open-sourced 2025, v1.0 in 2025). What you know today — `Agent(...)`, `stream_async`, `structured_output`, `@tool`, `SessionManager`, the hooks/interrupts HITL, `GraphBuilder` — may shift under you; verify exact signatures (especially the interrupts and multi-agent APIs) against the version you install. jaato's surface is the daemon contract, not a rapidly churning Python API.
+- You trade **typed objects for dicts**. Strands' `structured_output` hands back a validated Pydantic instance; jaato hands back a server-validated **dict | None**. The guarantee moves to the boundary, but you lose the in-IDE typed-attribute ergonomics — re-wrap into your own model client-side if you want them back.
+- **Observability shifts from in-process to a daemon flag.** Strands emits **OpenTelemetry** trajectories (every model/tool step) to any OTel backend — X-Ray, CloudWatch, Jaeger, Langfuse — and persists conversations via a pluggable `SessionManager` (File / S3 / Redis / AgentCore Memory), all living in *your* process and *your* chosen store. With jaato, durability and OTel tracing are **daemon properties** you turn on, not libraries you wire — less to assemble, but you observe and persist through the daemon's model rather than your own.

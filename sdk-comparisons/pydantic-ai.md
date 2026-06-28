@@ -181,7 +181,7 @@ async with IPCClient.session(
     print(await s.ask("Delete temp.log"))
 ```
 
-**Side by side.** Pydantic AI's deferred-tools model is genuinely close in spirit: a gated tool pauses the run and surfaces `DeferredToolRequests`; you gather approvals and resume with the original `message_history` + a `DeferredToolResults`. It runs **in your process** — you hold the message history and drive the resume (inline `HandleDeferredToolCalls`, or stop-the-world-and-resume for an out-of-process UI). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook/Telegram bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
+**Side by side.** Pydantic AI's deferred-tools model is genuinely close in spirit: a gated tool pauses the run and surfaces `DeferredToolRequests`; you gather approvals and resume with the original `message_history` + a `DeferredToolResults`. It runs **in your process** — you hold the message history and drive the resume (inline `HandleDeferredToolCalls`, or stop-the-world-and-resume for an out-of-process UI). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
 
 ## 8. Multi-agent / delegation
 
@@ -248,6 +248,12 @@ async with IPCClient.session(agent="extract", profile="extract",   # persona (so
                              cascade_driver_id=cid) as s:
     await s.complete("Extract the facts from this doc: …")          # stage 1's first message (its task)
 ```
+For the typed handoff to work, the **producer's profile must declare a `completion_payload_schema`** — without it `signal_completion` is a legacy summary and `event.get("facts")` below is `None`:
+```yaml
+# .jaato/profiles/extract.yaml (excerpt)
+completion_payload_schema: { type: object, properties: { facts: { type: string } }, required: [facts] }
+# → the extract agent then calls signal_completion(facts="…")  — a schema's top-level props are FLAT args, not wrapped
+```
 A **deployment reactor** (`.jaato/reactors/` + `.jaato/scripts/`) spawns each next stage inside the daemon when the prior one completes:
 ```jsonc
 // .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
@@ -292,16 +298,16 @@ async with IPCRecoveryClient.session(
 
 ---
 
-## When each shines
+## Coming from Pydantic AI
 
-| You want… | Reach for |
-|---|---|
-| A tightly-typed agent in your Python process — Pydantic-validated output, deps, and tools; trivial to unit-test and embed | **Pydantic AI** |
-| A low-setup, **first-party** LLM-observability *platform* (Logfire — built-in instrumentation, conversation/token/cost UI, by the same team) | **Pydantic AI** (both speak OpenTelemetry; jaato emits the same signals daemon-side to a backend *you* choose, with no bundled UI) |
-| Multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / cascades / crash-recovery; provider- and runtime-agnostic (local GPUs); server-enforced typed completion gates; a thin client with per-agent memory isolated in server-side runners | **jaato-sdk** |
+Not a scorecard — if you already think in Pydantic AI, here's what actually changes when you move to jaato, and what it buys you:
 
-**Honest caveats.**
-- Both sides are Python, so this is a genuine same-language comparison.
-- **Pydantic AI moves quickly.** The snippets use the current API (`result.output`, `instructions=`, `output_type=`, deferred tools); verify exact signatures (especially the deferred-tools and `pydantic-graph` APIs) against the version you install.
-- **jaato-sdk needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency the in-process library doesn't have; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The facade keeps the common path to one `async with`.
-- Different runtime models: Pydantic AI runs **your** agent code (and tools) in your Python process — easy to test, embed, and reason about with types; jaato runs agents as **isolated subprocesses** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app.
+- **Typed output becomes a server-enforced gate.** `output_type=` validates in your process; jaato's `completion_payload_schema` validates *server-side* — the agent can't finish off-shape regardless of which client is attached. Same instinct, enforced at the boundary (you get a validated dict, not a typed object).
+- **Your in-process agent becomes an isolated daemon session.** What Pydantic AI runs in your Python process, jaato runs as a confined per-session subprocess — so isolation, multi-tenancy, permissions, and crash-recovery come from the runtime, not code you write.
+- **You stop wiring the agent loop and cross-provider plumbing.** Any model (local GPUs included), built-in permissions + out-of-band HITL, and reactor-driven cascades are runtime features, not things you assemble.
+
+**What to keep in mind (honest trade-offs).**
+- Both sides are Python — a genuine same-language comparison.
+- jaato needs a running daemon (auto-started here): a real dependency for a throwaway script; the point for a fleet of isolated, recoverable, multi-tenant agents.
+- jaato hands you dicts + server-validated payloads, not Pydantic's in-process typed objects — less type-tight at the call site, stronger at the boundary. Both speak OpenTelemetry; jaato emits the same signals to a backend you choose, with no bundled UI.
+- Pydantic AI moves quickly — verify `result.output`, deferred tools, and `pydantic-graph` against the version you install.

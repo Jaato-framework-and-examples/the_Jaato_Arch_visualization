@@ -47,9 +47,9 @@ The docs are grounded in three source trees that are cloned **locally** for refe
 **git-ignored — not part of this repo** (two are private):
 
 ```
-jaato/             public source repo (github: Jaato-framework-and-examples/jaato)
-jaato-premium/     PRIVATE — premium source (reactor engine; cascades are reactor-driven)
-kb-enablement-2.0/ PRIVATE — reference deployment: the production cascade (.jaato/ + driver) used by 09/10
+jaato/      public source repo (github: Jaato-framework-and-examples/jaato)
+(private)   premium source — the reactor engine behind cascades
+(private)   a reference deployment — the production cascade (.jaato/ + driver) used by docs 09/10
 ```
 
 ## Components (bottom → top)
