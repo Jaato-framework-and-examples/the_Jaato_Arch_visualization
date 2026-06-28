@@ -67,9 +67,10 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
    a profile knob (project convention: credentials via `pass:` knobs, never env
    vars). Declarative
    examples carry the same knob in their profile JSON instead.
-3. **OpenRouter model/provider** — `{"model": "openai/gpt-4o-mini", "provider":
-   "openrouter"}` in place of the docs' `{"model": "gpt-4o", "provider": "openai"}`
-   (a cheap, locally-funded, gpt-4o-family model). For declarative examples the
+3. **OpenRouter model/provider** — `{"model": "google/gemini-2.5-flash",
+   "provider": "openrouter"}` in place of the docs' `{"model": "gpt-4o",
+   "provider": "openai"}` (a cheap model with reliable tool-calling + completion
+   gates, which the tool examples ex05–ex09 lean on). For declarative examples the
    model/provider live in the profile JSON instead.
 4. **explicit `plugins`** — *not a deviation, the correct form.* The installed
    daemon **requires** a `plugins` key on an inline session spec (absent ≠ `[]` ≠
@@ -103,10 +104,13 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
   stage emitted a correct `{"facts": …}` payload. The access pattern is correct
   (verified against `build_merged_view`); the delivered `agent.completed` event
   carries the envelope fields but not `payload`. Flagged upstream.
-- **ex03 — client-driven multi-turn deadlocks (pending upstream fix).** Two
-  sequential `s.ask` on one workspace+agent session hang on turn 2 (the send
-  queues behind a stuck `_model_running`). Reported with a repro; held PENDING in
-  `smoke.py` (not an example defect).
+- **ex03 — client-driven multi-turn deadlocks (pending upstream fix).** Any two
+  sequential `s.ask` on one session hang on turn 2: the daemon emits
+  `TURN_COMPLETED` before clearing `_model_running`, so turn 2's send hits the
+  "still running" gate, is forwarded as an inject onto an idle session with no
+  drainer, and queues forever. Root-caused with a diagnostic trace (not ws/agent/
+  reactor — a core runner-tier race). Held PENDING in `smoke.py` (not an example
+  defect); ex03 is the only example doing two client-driven asks.
 - **ex06 — the autonomous loop needs daemon-side config the docs omit.** jaato
   gates file/cli tools by default (set `permission.policy.defaultPolicy:"allow"`),
   and `file_edit` fails to initialise on this build — it can't resolve its backup
@@ -118,7 +122,7 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
 ## The dedicated daemon
 
 `daemon.sh` runs an isolated daemon (`/tmp/jaato-examples.sock`, ws `:8099`, own
-pid/log). Provider = `openrouter` (`openai/gpt-4o-mini`), creds via the profiles'
+pid/log). Provider = `openrouter` (`google/gemini-2.5-flash`), creds via the profiles'
 `pass:` knob. Note: a dedicated daemon still inherits **home-global** reactors
 from `~/.jaato/reactors/` — a completion reactor there can deadlock client-driven
 multi-turn (see the repo findings); keep that dir clean for these examples.

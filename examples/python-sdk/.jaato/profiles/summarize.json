@@ -1,7 +1,7 @@
 {
   "name": "summarize",
   "description": "Cascade stage 2: summarise the extracted facts, completion-gated on a `summary` payload.",
-  "model": "openai/gpt-4o-mini",
+  "model": "google/gemini-2.5-flash",
   "provider": "openrouter",
   "max_turns": 3,
   "plugins": [],

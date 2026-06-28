@@ -1,7 +1,7 @@
 {
   "name": "extract",
   "description": "Cascade stage 1: extract facts from a document, completion-gated on a `facts` payload.",
-  "model": "openai/gpt-4o-mini",
+  "model": "google/gemini-2.5-flash",
   "provider": "openrouter",
   "max_turns": 3,
   "plugins": [],

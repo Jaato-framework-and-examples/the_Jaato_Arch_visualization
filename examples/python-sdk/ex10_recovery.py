@@ -47,7 +47,7 @@ async def _pump(client):
 
 async def main():
     async with IPCRecoveryClient.session(**CONN,
-            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH},
+            profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH},
             on_status_change=lambda st: print(st.state)) as s:   # auto-reconnect across daemon restarts
         pump = asyncio.create_task(_pump(s.client))
         try:

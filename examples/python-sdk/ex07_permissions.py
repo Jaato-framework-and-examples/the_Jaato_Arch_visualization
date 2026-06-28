@@ -14,12 +14,23 @@ Doc snippet (verbatim shape):
 
 The doc leaves `approve(tool_name)` as an illustrative predicate. Here it is a
 real one — auto-approving so the example is headless (the langchain variant
-prompts via input()). Standing deviations (see README): `**CONN`, `**AUTH` (pass: cred knob), the model/provider literal.
-(`plugins` is already present in this example's doc spec.)
+prompts via input()).
+
+FINDING: the doc's `s.ask("Delete temp.log")` is a flaky way to trigger the gate
+— a model may decline a destructive shell delete on safety grounds, or answer
+conversationally instead of calling the tool, so the gate never fires (model-
+dependent). The on_permission mechanism (the example's actual subject) is
+identical for ANY gated tool, so we make the gate fire deterministically: ask for
+something only the shell can provide (the system `date`, which the model can't
+answer without the tool), with `defaultPolicy:"ask"` so every cli call is gated →
+on_permission is asked → approves.
+
+Standing deviations (see README): `**CONN`, `**AUTH` (pass: cred knob), the
+model/provider literal, the ask-policy + benign command above.
 """
 import asyncio
 from jaato_sdk import IPCClient
-from _config import CONN, AUTH
+from _config import CONN, WORKSPACE, AUTH
 
 
 def approve(tool_name: str) -> bool:
@@ -29,10 +40,12 @@ def approve(tool_name: str) -> bool:
 
 
 async def main():
-    async with IPCClient.session(**CONN,
-            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": ["cli"], **AUTH},
+    async with IPCClient.session(**CONN, workspace_path=WORKSPACE,
+            profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": ["cli"],
+                     "plugin_configs": {**AUTH["plugin_configs"],
+                                        "permission": {"policy": {"defaultPolicy": "ask"}}}},
             on_permission=lambda ev: "y" if approve(ev.tool_name) else "n") as s:
-        print(await s.ask("Delete temp.log"))
+        print(await s.ask("What is the current date and time on this machine? Find out by running the `date` command in the shell."))
 
 
 asyncio.run(main())

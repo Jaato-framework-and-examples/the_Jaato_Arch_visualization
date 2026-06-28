@@ -23,12 +23,12 @@ from _config import CONN, AUTH
 async def main():
     # The session form — the shape all seven SDK docs use in §1.
     async with IPCClient.session(**CONN,
-            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH}) as s:
+            profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH}) as s:
         print(await s.ask("Who are you? One sentence."))
 
     # …or the one-shot module helper, for a throwaway call.
     print(await ask("Who are you? One sentence.", **CONN,
-                    profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH}))
+                    profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH}))
 
 
 asyncio.run(main())

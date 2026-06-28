@@ -1,7 +1,7 @@
 {
   "name": "writer",
   "description": "Writing specialist. Turns research notes into a short, vivid blurb.",
-  "model": "openai/gpt-4o-mini",
+  "model": "google/gemini-2.5-flash",
   "provider": "openrouter",
   "max_turns": 4,
   "plugins": [],

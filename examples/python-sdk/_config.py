@@ -66,9 +66,9 @@ WORKSPACE = PROJECT_DIR
 
 # The docs write the inline profile as {"model": "gpt-4o", "provider": "openai"}.
 # The examples keep that dict inline and visible (faithful shape) but substitute
-# the locally-reachable OpenRouter model. `openai/gpt-4o-mini` is cheap and
+# the locally-reachable OpenRouter model. `google/gemini-2.5-flash` is cheap and
 # reliable for tool-calling + completion gates (what ex04/05/07/08/09 lean on),
-# and stays recognisably gpt-4o-family. These constants exist for the README to
+# These constants exist for the README to
 # point at when explaining the substitution.
-MODEL = "openai/gpt-4o-mini"
+MODEL = "google/gemini-2.5-flash"
 PROVIDER = "openrouter"

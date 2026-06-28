@@ -8,3 +8,4 @@ __pycache__/
 .jaato/.artifact_tracker.json
 trip.md
 .jaato/**/backups/
+temp.log

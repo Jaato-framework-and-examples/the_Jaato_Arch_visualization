@@ -1,7 +1,7 @@
 {
   "name": "person-extractor",
   "description": "Extracts a person's name and age into a server-validated completion payload.",
-  "model": "openai/gpt-4o-mini",
+  "model": "google/gemini-2.5-flash",
   "provider": "openrouter",
   "max_turns": 3,
   "plugins": [],

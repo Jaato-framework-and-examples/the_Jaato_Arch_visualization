@@ -18,7 +18,7 @@ from _config import CONN, AUTH
 
 async def main():
     async with IPCClient.session(**CONN,
-            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH}) as s:
+            profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH}) as s:
         async for chunk in s.stream("Tell me a short story."):
             print(chunk, end="", flush=True)
     print()

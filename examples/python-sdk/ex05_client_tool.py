@@ -26,7 +26,7 @@ from _config import CONN, AUTH
 
 async def main():
     async with IPCClient.session(**CONN,
-            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH},
+            profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH},
             client_tools=[{
                 "name": "get_weather", "description": "Return the weather for a city.",
                 "parameters": {"type": "object",

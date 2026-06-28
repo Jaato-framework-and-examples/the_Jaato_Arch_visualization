@@ -26,7 +26,7 @@ from _config import CONN, WORKSPACE, AUTH
 
 async def main():
     async with IPCClient.session(**CONN, workspace_path=WORKSPACE, agent="pirate",
-                                 profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH}) as s:
+                                 profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH}) as s:
         await s.ask("Hello")
         print(await s.ask("And your name?"))            # same session → it remembers
 

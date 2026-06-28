@@ -40,7 +40,7 @@ from _config import CONN, WORKSPACE, AUTH
 
 async def main():
     async with IPCClient.session(**CONN, workspace_path=WORKSPACE, profile={
-            "model": "openai/gpt-4o-mini", "provider": "openrouter",
+            "model": "google/gemini-2.5-flash", "provider": "openrouter",
             "plugins": ["cli", "web_search", "todo"],   # only file_edit dropped — see FINDING 2
             "plugin_configs": {**AUTH["plugin_configs"],
                                "permission": {"policy": {"defaultPolicy": "allow"}}}}) as s:

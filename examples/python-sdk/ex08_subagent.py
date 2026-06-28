@@ -39,7 +39,7 @@ from _config import CONN, WORKSPACE, AUTH
 
 async def main():
     async with IPCClient.session(**CONN, workspace_path=WORKSPACE, agent="lead",
-            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": ["subagent"], **AUTH,
+            profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": ["subagent"], **AUTH,
                      "completion_payload_schema": {
                          "type": "object", "additionalProperties": False,
                          "required": ["blurb"],

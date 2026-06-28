@@ -1,7 +1,7 @@
 {
   "name": "researcher",
   "description": "Research specialist. Given a topic, returns concise bullet-point notes of key facts.",
-  "model": "openai/gpt-4o-mini",
+  "model": "google/gemini-2.5-flash",
   "provider": "openrouter",
   "max_turns": 4,
   "plugins": [],
