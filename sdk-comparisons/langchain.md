@@ -9,7 +9,7 @@ The daemon is a real architectural difference — but with the **convenience fac
 
 > **Setup.** LangChain: `pip install langchain langchain-openai` (`langgraph` for the agent/HITL/durability examples). jaato-sdk: `pip install jaato-sdk` + a reachable daemon socket. The facade front door: `from jaato_sdk import IPCClient, IPCRecoveryClient, ask, AgentError, PermissionUnhandled`. All jaato calls are `async`. The LangChain snippets use current LCEL / `langchain_openai` / LangGraph idioms (the API churns across majors — see the caveat at the end).
 
-`IPCClient.session(...)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0` for a cold autostart). It forwards `profile` / `agent` / `agent_params` / `cascade_driver_id` straight to `create_session`, so **both** the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …}`) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` (so a plain turn never hangs) and **raise** on failure — `AgentError` on an error terminal, `PermissionUnhandled` if a gated tool goes unanswered — so there's no manual `if reason == "error"` bookkeeping. And the facade is **not all-or-nothing**: `s.client` exposes the underlying low-level client, so you can mix high-level `ask`/`complete`/`stream` with raw event-API calls — `s.client.subscribe(EventType.…)`, `s.client.cascade_events(...)`, `s.client.respond_to_permission(req_id, "e", edited_arguments={...})` (edit a tool's args before it runs) — on the **same session and connection** (listeners you add persist across turns). `ask`/`complete`/`stream` also take `attachments=[...]` for multimodal image/file inputs.
+`IPCClient.session(...)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0` for a cold autostart). It forwards `profile` / `agent` / `agent_params` / `cascade_driver_id` straight to `create_session`, so **both** the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …, "plugins": []}` — an inline spec needs an explicit `plugins` key; `[]` = the minimal framework set) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` (so a plain turn never hangs) and **raise** on failure — `AgentError` on an error terminal, `PermissionUnhandled` if a gated tool goes unanswered — so there's no manual `if reason == "error"` bookkeeping. And the facade is **not all-or-nothing**: `s.client` exposes the underlying low-level client, so you can mix high-level `ask`/`complete`/`stream` with raw event-API calls — `s.client.subscribe(EventType.…)`, `s.client.cascade_events(...)`, `s.client.respond_to_permission(req_id, "e", edited_arguments={...})` (edit a tool's args before it runs) — on the **same session and connection** (listeners you add persist across turns). `ask`/`complete`/`stream` also take `attachments=[...]` for multimodal image/file inputs.
 
 ---
 
@@ -29,7 +29,7 @@ import asyncio
 from jaato_sdk import IPCClient
 
 async def main():
-    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai"}) as s:
+    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
         print(await s.ask("Who are you? One sentence."))
 
 asyncio.run(main())
@@ -37,7 +37,7 @@ asyncio.run(main())
 …or the one-shot module helper, for a throwaway call:
 ```python
 from jaato_sdk import ask
-print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai"}))
+print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}))
 ```
 
 **Side by side.** LangChain is one in-process call. jaato-sdk opens an isolated session on a (possibly auto-started) daemon and `ask`s — one `async with` of overhead, not a page of `connect`/`subscribe`/`done.wait`. The daemon is still there; it just costs a line now.
@@ -52,7 +52,7 @@ for chunk in llm.stream("Tell me a short story."):
 
 **jaato-sdk**
 ```python
-async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai"}) as s:
+async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
     async for chunk in s.stream("Tell me a short story."):
         print(chunk, end="", flush=True)
 ```
@@ -74,7 +74,7 @@ print(llm.invoke(history).content)                  # you carry the state
 ```python
 # persona lives in .jaato/agents/pirate.md (the system instructions), referenced by name:
 async with IPCClient.session(agent="pirate",
-                             profile={"model": "gpt-4o", "provider": "openai"}) as s:
+                             profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
     await s.ask("Hello")
     print(await s.ask("And your name?"))            # same session → it remembers
 ```
@@ -120,7 +120,7 @@ def get_weather(args):                                # runs in YOUR process on 
     return {"weather": f"{args['city']}: sunny, 24C"}
 
 async with IPCClient.session(
-        profile={"model": "gpt-4o", "provider": "openai"},
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": []},
         client_tools=[{
             "name": "get_weather", "description": "Return the weather for a city.",
             "parameters": {"type": "object",
@@ -268,7 +268,7 @@ agent = create_react_agent("openai:gpt-4o", tools=tools, checkpointer=PostgresSa
 ```python
 from jaato_sdk import IPCRecoveryClient
 async with IPCRecoveryClient.session(
-        profile={"model": "gpt-4o", "provider": "openai"},
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": []},
         on_status_change=print) as s:                  # auto-reconnect across daemon restarts
     print(await s.ask("Long task…"))                   # survives a daemon bounce
 # sessions also persist server-side: detach (fire-and-forget) and reattach by id with the low-level client.
