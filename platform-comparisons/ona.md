@@ -9,7 +9,7 @@ Of everything compared in this series, Ona is the **closest architectural peer**
 
 So both are "launch agents server-side and drive them as a client." Ona gives you a managed, governed, OpenAI-powered cloud you call; jaato gives you a provider-agnostic engine you host and shape. Read it as a trade, not a scoreboard.
 
-> **Setup.** Ona: a `GITPOD_API_KEY`; calls are **gRPC-JSON over HTTPS** at `https://app.gitpod.io/api/` (the `gitpod.v1` namespace persists from the Gitpod heritage) — **no first-party SDK**, so its examples are `curl`. jaato has **two transports**: **IPC** (a *local* Unix socket — the Python `IPCClient`) and **WebSocket** (`--web-socket :8089` + a bearer token — *remote*). Ona is a remote service over HTTPS, so the apt analog is jaato's **WS / remote path**: the open wire protocol (JSON frames, callable with `curl`/`websocat`) **plus** the **TypeScript** facade (`JaatoClient.session({url:"wss://…"})`). Example 1 compares **raw protocol on both sides** (Ona REST ↔ jaato WS frames); the rest use the TS facade over WS, each mapping to the same frames. *(The Python `IPCClient` is the local IPC client — not the remote analog; see the caveats.)*
+> **Setup.** Ona: a `GITPOD_API_KEY`; calls are **gRPC-JSON over HTTPS** at `https://app.gitpod.io/api/` (the `gitpod.v1` namespace persists from the Gitpod heritage) — **no first-party SDK**, so its examples are `curl`. jaato has **two transports**: **IPC** (a *local* Unix socket — the Python `IPCClient`) and **WebSocket** (`--web-socket :8089` + a bearer token — *remote*). Ona is a remote service over HTTPS, so the apt analog is jaato's **WS / remote path**: the open wire protocol (JSON frames, callable with `curl`/`websocat`) **plus** the **TypeScript** facade (`JaatoClient.session({url:"wss://…"})`). Example 1 compares **raw protocol on both sides** (Ona REST ↔ jaato WS frames) and also shows jaato's **TS facade** once — the SDK Ona has no equivalent of; the **rest stay at the raw-WS level on both sides**, wire-for-wire. *(The Python `IPCClient` is the local IPC client — not the remote analog; see the caveats.)*
 
 ---
 
@@ -60,18 +60,15 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/GetAgentExecution 
 #   status.conversationUrl, status.transcriptUrl, inputTokensUsed/outputTokensUsed
 ```
 
-**jaato** — reattach by id and consume the event stream:
-```ts
-import { JaatoClient, EventTypeValue } from "@jaato/sdk";
-const client = new JaatoClient({ url: "wss://localhost:8089", token });
-await client.connect();
-await client.attachSession(sid);                       // re-attach WHILE the turn runs → live output
-client.subscribe(EventTypeValue.AGENT_OUTPUT, (e) => process.stdout.write(e.text ?? ""));
-client.subscribeOnce(EventTypeValue.TURN_COMPLETED, () => done());       // a plain turn ends here…
-client.subscribeOnce(EventTypeValue.SESSION_TERMINATED, () => done());   // …or here if completion-gated
+**jaato** — reattach by id (on the same WS) and consume the event stream:
+```bash
+→ {"type":"command.execute","command":"session.attach","args":["<sid>"]}
+# ← {"type":"agent.output","text":"…"}        # FIRST replayed history, THEN live output (raw attach replays prior turns)
+# ← {"type":"turn.completed", ...}             # a plain turn ends here…
+# ← {"type":"session.terminated", ...}         # …or here if the agent is completion-gated
 ```
 
-**Side by side.** Ona is **poll-based** — you `GetAgentExecution` for a `phase` and links to the conversation/transcript (and token usage). jaato is **event-based** — you re-attach and consume `AGENT_OUTPUT`/lifecycle events live (no polling), with the run's transcript persisted server-side. Different I/O models for the same "watch a detached run" need.
+**Side by side.** Ona is **poll-based** — you `GetAgentExecution` for a `phase` and links to the conversation/transcript (and token usage). jaato is **event-based** — you re-attach and consume `AGENT_OUTPUT`/lifecycle events live (no polling), with the run's transcript persisted server-side. (On a raw attach the daemon first **replays the session's prior history** as `agent.output` events, *then* streams live output — declare a `chat` presentation via `ClientConfigRequest` to skip the replay.) Different I/O models for the same "watch a detached run" need.
 
 ## 3. Send follow-up input to a running agent
 
@@ -83,12 +80,12 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/SendToAgentExecuti
 ```
 
 **jaato**
-```ts
-await client.attachSession(sid);
-await client.sendMessage("Also add tests.");           // continue the same running session
+```bash
+→ {"type":"command.execute","command":"session.attach","args":["<sid>"]}
+→ {"type":"message.send","text":"Also add tests."}     # continue the same running session
 ```
 
-**Side by side.** Same capability — steer a long-running agent mid-flight. Ona's `WAITING_FOR_INPUT` phase + `SendToAgentExecution` mirrors jaato re-attaching and `sendMessage`-ing the session. (jaato can also push a non-blocking nudge via `inject_prompt`, and a *reactor* can do this server-side with no client — see the resilience doc.)
+**Side by side.** Same capability — steer a long-running agent mid-flight. Ona's `WAITING_FOR_INPUT` phase + `SendToAgentExecution` mirrors jaato re-attaching and sending a `message.send` frame. (jaato can also push a non-blocking nudge via `inject_prompt`, and a *reactor* can do this server-side with no client — see the resilience doc.)
 
 ## 4. Stop / list runs
 
@@ -99,10 +96,10 @@ curl -X POST .../ListAgentExecutions   -d '{ "projectIds": ["proj_123"] }'    # 
 ```
 
 **jaato**
-```ts
-await client.stop();                                   // cancel the in-flight turn
-await client.endSession();                             // or deleteSession(sid) by id
-await client.listSessions();                           // enumerate sessions (→ SessionList event)
+```bash
+→ {"type":"session.stop","agent_id":null}                        # cancel the in-flight turn (null = current/all)
+→ {"type":"command.execute","command":"session.end","args":[]}   # end current; or session.delete ["<sid>"] by id
+→ {"type":"command.execute","command":"session.list","args":[]}  # ← replies with a SessionList event
 ```
 
 **Side by side.** Symmetric lifecycle controls — stop a run, enumerate runs. Ona scopes its list by **project/environment**; jaato by the **daemon's** session registry.
@@ -154,6 +151,6 @@ def execute(params, event, ctx):
 | A **self-hosted, provider- and runtime-agnostic** agent engine (any model, **local GPUs**); your own personas/profiles/plugins; reactor-driven cascades; server-enforced typed completion gates; AppArmor-isolated, multi-tenant sessions; out-of-band HITL — all under your control | **jaato** |
 
 **Honest caveats.**
-- This is a **platform comparison**, compared at the **wire level** and on jaato's **remote (WebSocket)** transport — the apt analog to Ona's remote HTTPS. Ona's surface is a **gRPC-JSON REST API** (curl) with **no SDK**, still under the `gitpod.v1` / `app.gitpod.io` namespace from its Gitpod origins (verify endpoints against the current API reference). jaato's remote surface is the **WS protocol** (`curl`/`websocat`, Example 1) **plus** the **TypeScript** facade over `wss://` — a convenience layer over the same wire you can hit raw, not a different level. **Mind the transport split:** jaato's **Python** `IPCClient` is the **local** (Unix-socket / IPC) client and does **not** speak WS — the remote client is the **TS** SDK (or raw WS); don't read the Python examples in the SDK-comparison docs as the remote path. The WS and IPC surfaces are otherwise feature-par (same command/event protocol).
+- This is a **platform comparison**, compared at the **wire level** and on jaato's **remote (WebSocket)** transport — the apt analog to Ona's remote HTTPS. Ona's surface is a **gRPC-JSON REST API** (curl) with **no SDK**, still under the `gitpod.v1` / `app.gitpod.io` namespace from its Gitpod origins (verify endpoints against the current API reference). jaato's remote surface is the **WS protocol** (`curl`/`websocat` — used throughout) **plus** the **TypeScript** facade over `wss://` (shown once, Example 1) — a convenience layer over the same wire you can hit raw, not a different level. **Mind the transport split:** jaato's **Python** `IPCClient` is the **local** (Unix-socket / IPC) client and does **not** speak WS — the remote client is the **TS** SDK (or raw WS); don't read the Python examples in the SDK-comparison docs as the remote path. The WS and IPC surfaces are otherwise feature-par (same command/event protocol).
 - **Ona is managed + OpenAI-centric.** It runs **in Ona's cloud (or your VPC)** and is built around **Codex/OpenAI models** (`codexSettings`); since the June 2026 OpenAI acquisition it's the cloud-execution backend for Codex. jaato is **self-hosted** and **provider-agnostic** (Anthropic, Google, OpenAI, local vLLM/Ollama/…), which is the opposite trade: more to run, but yours and model-portable.
 - **Different I/O & maturity.** Ona is poll-based (`GetAgentExecution`) and git/CI-shaped; jaato is event-based (the bus + reactors) and persona/profile/cascade-shaped. They overlap most on *background, isolated, recoverable, steerable* agents — and least on tool-authoring and typed output, which Ona doesn't expose as a build API.
