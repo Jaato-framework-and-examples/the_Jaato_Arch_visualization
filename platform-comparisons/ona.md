@@ -9,7 +9,7 @@ Of everything compared in this series, Ona is the **closest architectural peer**
 
 So both are "launch agents server-side and drive them as a client." Ona gives you a managed, governed, OpenAI-powered cloud you call; jaato gives you a provider-agnostic engine you host and shape. Read it as a trade, not a scoreboard.
 
-> **Setup.** Ona: a `GITPOD_API_KEY`; calls are gRPC-JSON over HTTPS at `https://app.gitpod.io/api/` (the `gitpod.v1` namespace persists from the Gitpod heritage) — no first-party agent-building SDK, so the examples are `curl`. jaato: `pip install jaato-sdk` + a reachable daemon; `from jaato_sdk import IPCClient, ClientType, EventType`.
+> **Setup.** Ona: a `GITPOD_API_KEY`; calls are **gRPC-JSON over HTTPS** at `https://app.gitpod.io/api/` (the `gitpod.v1` namespace persists from the Gitpod heritage) — **no first-party SDK**, so its examples are `curl`. jaato: a daemon you run with a **WebSocket** endpoint (`--web-socket :8089`) + a bearer token; its wire protocol is **JSON frames over WS**, callable with `curl`/`websocat`. To keep this honest at the wire level, Example 1 shows **both sides as raw protocol calls** (Ona REST ↔ jaato WS); the rest use jaato's **SDK** (`from jaato_sdk import IPCClient, ClientType, EventType`) — which is itself something Ona has no equivalent of — each mapping to the same WS frames.
 
 ---
 
@@ -29,7 +29,15 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/StartAgent \
 # → { "agentExecutionId": "uuid" }
 ```
 
-**jaato** — open a session, send the task, leave it running daemon-side (fire-and-forget):
+**jaato** — *same wire level as Ona:* raw **WS frames** over the daemon's WebSocket endpoint (bearer token):
+```bash
+websocat "wss://localhost:8089/?token=$JAATO_WS_TOKEN"   # CLI clients may use an Authorization: Bearer header
+# ← {"type":"connected","server_info":{...}}
+→ {"type":"command.execute","command":"session.new","args":["--profile","backend"]}
+→ {"type":"message.send","text":"Refactor the auth module and open a PR."}
+# ← the daemon streams events back:  {"type":"agent.output","text":"…"}  …  {"type":"turn.completed", ...}
+```
+…or jaato's **SDK** (the convenience layer Ona lacks) over the *same* protocol — here fire-and-forget, leaving the run going:
 ```python
 from jaato_sdk import IPCClient, ClientType
 client = IPCClient("/tmp/jaato.sock", client_type=ClientType.API, env_file=".env", workspace_path=".")
@@ -40,7 +48,7 @@ await client.disconnect()                # disconnect does NOT cancel — the tu
 print(sid)                               # state persists to disk; reattach by id later (reloads it) — see §2
 ```
 
-**Side by side.** Both hand back an **id for a server-side run** (`agentExecutionId` / `sid`) and detach. Ona starts the agent in a **cloud devcontainer** it provisions (with a Codex/OpenAI model + a `mode` — execution / planning / "RALPH"); jaato starts a **session** in an isolated runner on the daemon **you host**, with the model/provider/plugins from a profile. Ona binds the run to a **git project / PR / context URL**; jaato binds it to a **workspace**.
+**Side by side.** At the **wire level both are raw protocols** — Ona's REST `POST`, jaato's WS frames; jaato additionally layers an SDK on top (above), which Ona has no equivalent of. Both hand back an **id for a server-side run** (`agentExecutionId` / `sid`) and detach. Ona starts the agent in a **cloud devcontainer** it provisions (with a Codex/OpenAI model + a `mode` — execution / planning / "RALPH"); jaato starts a **session** in an isolated runner on the daemon **you host**, with the model/provider/plugins from a profile. Ona binds the run to a **git project / PR / context URL**; jaato binds it to a **workspace**.
 
 ## 2. Check status / collect output
 
@@ -146,6 +154,6 @@ def execute(params, event, ctx):
 | A **self-hosted, provider- and runtime-agnostic** agent engine (any model, **local GPUs**); your own personas/profiles/plugins; reactor-driven cascades; server-enforced typed completion gates; AppArmor-isolated, multi-tenant sessions; out-of-band HITL — all under your control | **jaato** |
 
 **Honest caveats.**
-- This is a **platform comparison**, not SDK-usage: Ona has **no build-an-agent SDK** — its surface is a **gRPC-JSON REST API** (curl above), still under the `gitpod.v1` / `app.gitpod.io` namespace from its Gitpod origins. Verify endpoints against the current API reference.
+- This is a **platform comparison**, compared at the **wire level**: Ona's surface is a **gRPC-JSON REST API** (curl) with **no SDK**, still under the `gitpod.v1` / `app.gitpod.io` namespace from its Gitpod origins (verify endpoints against the current API reference). jaato's wire surface is a **WebSocket protocol** (`curl`/`websocat`, Example 1) **plus** Python/TS SDKs — so the SDK examples below are jaato's *convenience layer over the same protocol you can hit raw*, not a different level.
 - **Ona is managed + OpenAI-centric.** It runs **in Ona's cloud (or your VPC)** and is built around **Codex/OpenAI models** (`codexSettings`); since the June 2026 OpenAI acquisition it's the cloud-execution backend for Codex. jaato is **self-hosted** and **provider-agnostic** (Anthropic, Google, OpenAI, local vLLM/Ollama/…), which is the opposite trade: more to run, but yours and model-portable.
 - **Different I/O & maturity.** Ona is poll-based (`GetAgentExecution`) and git/CI-shaped; jaato is event-based (the bus + reactors) and persona/profile/cascade-shaped. They overlap most on *background, isolated, recoverable, steerable* agents — and least on tool-authoring and typed output, which Ona doesn't expose as a build API.
