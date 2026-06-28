@@ -63,12 +63,12 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/GetAgentExecution 
 **jaato** — reattach by id (on the same WS) and consume the event stream:
 ```bash
 → {"type":"command.execute","command":"session.attach","args":["<sid>"]}
-# ← {"type":"agent.output","text":"…"}        # live output — re-attach WHILE the turn runs
+# ← {"type":"agent.output","text":"…"}        # FIRST replayed history, THEN live output (raw attach replays prior turns)
 # ← {"type":"turn.completed", ...}             # a plain turn ends here…
 # ← {"type":"session.terminated", ...}         # …or here if the agent is completion-gated
 ```
 
-**Side by side.** Ona is **poll-based** — you `GetAgentExecution` for a `phase` and links to the conversation/transcript (and token usage). jaato is **event-based** — you re-attach and consume `AGENT_OUTPUT`/lifecycle events live (no polling), with the run's transcript persisted server-side. Different I/O models for the same "watch a detached run" need.
+**Side by side.** Ona is **poll-based** — you `GetAgentExecution` for a `phase` and links to the conversation/transcript (and token usage). jaato is **event-based** — you re-attach and consume `AGENT_OUTPUT`/lifecycle events live (no polling), with the run's transcript persisted server-side. (On a raw attach the daemon first **replays the session's prior history** as `agent.output` events, *then* streams live output — declare a `chat` presentation via `ClientConfigRequest` to skip the replay.) Different I/O models for the same "watch a detached run" need.
 
 ## 3. Send follow-up input to a running agent
 
@@ -97,7 +97,7 @@ curl -X POST .../ListAgentExecutions   -d '{ "projectIds": ["proj_123"] }'    # 
 
 **jaato**
 ```bash
-→ {"type":"session.stop"}                                        # cancel the in-flight turn
+→ {"type":"session.stop","agent_id":null}                        # cancel the in-flight turn (null = current/all)
 → {"type":"command.execute","command":"session.end","args":[]}   # end current; or session.delete ["<sid>"] by id
 → {"type":"command.execute","command":"session.list","args":[]}  # ← replies with a SessionList event
 ```
