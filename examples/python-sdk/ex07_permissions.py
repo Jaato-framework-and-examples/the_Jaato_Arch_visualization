@@ -8,18 +8,18 @@ five other Python docs share this inline-lambda form, so it is canonical.)
 Doc snippet (verbatim shape):
 
     async with IPCClient.session(
-            profile={"model": "gpt-4o", "provider": "openai", "plugins": ["cli"]},
+            profile={"model": "gpt-4o", "provider": "openai", "plugins": ["cli"], **AUTH},
             on_permission=lambda ev: "y" if approve(ev.tool_name) else "n") as s:
         print(await s.ask("Delete temp.log"))
 
 The doc leaves `approve(tool_name)` as an illustrative predicate. Here it is a
 real one — auto-approving so the example is headless (the langchain variant
-prompts via input()). Standing deviations (see README): `**CONN`, GLM literal.
+prompts via input()). Standing deviations (see README): `**CONN`, `**AUTH` (pass: cred knob), the model/provider literal.
 (`plugins` is already present in this example's doc spec.)
 """
 import asyncio
 from jaato_sdk import IPCClient
-from _config import CONN
+from _config import CONN, AUTH
 
 
 def approve(tool_name: str) -> bool:
@@ -30,7 +30,7 @@ def approve(tool_name: str) -> bool:
 
 async def main():
     async with IPCClient.session(**CONN,
-            profile={"model": "glm-5-turbo", "provider": "zhipuai", "plugins": ["cli"]},
+            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": ["cli"], **AUTH},
             on_permission=lambda ev: "y" if approve(ev.tool_name) else "n") as s:
         print(await s.ask("Delete temp.log"))
 

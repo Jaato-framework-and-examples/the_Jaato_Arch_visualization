@@ -1,0 +1,14 @@
+{
+  "name": "researcher",
+  "description": "Research specialist. Given a topic, returns concise bullet-point notes of key facts.",
+  "model": "openai/gpt-4o-mini",
+  "provider": "openrouter",
+  "max_turns": 4,
+  "plugins": [],
+  "plugin_configs": {
+    "openrouter": {
+      "api_key": "pass://jaato/openrouter/api-key"
+    }
+  },
+  "system_instructions": "You are a research specialist. Given a topic, produce 3-5 concise bullet-point notes of the most important facts, then stop. Be factual and terse."
+}

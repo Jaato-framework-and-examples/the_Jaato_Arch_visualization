@@ -9,16 +9,16 @@ Doc snippet (verbatim shape):
         async for chunk in s.stream("Tell me a short story."):
             print(chunk, end="", flush=True)
 
-Standing deviations (see README): `**CONN`, GLM literal, `plugins:[]`.
+Standing deviations (see README): `**CONN`, `**AUTH` (pass: cred knob), the model/provider literal. (`plugins` is the required form, not a deviation.)
 """
 import asyncio
 from jaato_sdk import IPCClient
-from _config import CONN
+from _config import CONN, AUTH
 
 
 async def main():
     async with IPCClient.session(**CONN,
-            profile={"model": "glm-5-turbo", "provider": "zhipuai", "plugins": []}) as s:
+            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH}) as s:
         async for chunk in s.stream("Tell me a short story."):
             print(chunk, end="", flush=True)
     print()

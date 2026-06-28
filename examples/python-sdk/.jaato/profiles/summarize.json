@@ -1,0 +1,26 @@
+{
+  "name": "summarize",
+  "description": "Cascade stage 2: summarise the extracted facts, completion-gated on a `summary` payload.",
+  "model": "openai/gpt-4o-mini",
+  "provider": "openrouter",
+  "max_turns": 3,
+  "plugins": [],
+  "plugin_configs": {
+    "openrouter": {
+      "api_key": "pass://jaato/openrouter/api-key"
+    }
+  },
+  "completion_payload_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "summary"
+    ],
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "The summary of the extracted facts."
+      }
+    }
+  }
+}

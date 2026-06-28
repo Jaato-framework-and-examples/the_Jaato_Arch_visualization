@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # Start / stop the DEDICATED jaato daemon the examples run against.
 #
-# Isolated from every other daemon on this host: its own IPC socket, WS port,
-# pid file and log file. It never touches the live telegram bot (:8089) or the
-# kb socket (/tmp/jaato-glm.sock). Provider auth (zhipuai/GLM) resolves from
-# stored:zhipuai-auth — no key is passed here.
+# Its own IPC socket, WS port, pid file and log file, so it won't collide with
+# any other jaato daemon you may be running on the host. Provider auth
+# (openrouter) resolves from a `pass:` knob in the profiles
+# (plugin_configs.openrouter.api_key) — no key is passed here.
 set -euo pipefail
 
-JAATO_SERVER="${JAATO_SERVER:-/home/apanoia/.local/share/jaato/venv/bin/jaato-server}"
+# Prefer jaato-server on PATH; fall back to the conventional pip-install location.
+JAATO_SERVER="${JAATO_SERVER:-$(command -v jaato-server || echo "$HOME/.local/share/jaato/venv/bin/jaato-server")}"
+# Provider auth is NOT injected here. Credentials live in the profiles as a
+# `pass:` resolver knob of the provider plugin
+# (plugin_configs.openrouter.api_key = "pass://jaato/openrouter/api-key") — no
+# env var, no secret in any tracked file.
 SOCKET="/tmp/jaato-examples.sock"
 WSPORT=":8099"
 PIDFILE="/tmp/jaato-examples.pid"

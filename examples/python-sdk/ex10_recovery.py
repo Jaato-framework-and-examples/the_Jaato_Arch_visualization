@@ -27,11 +27,11 @@ facade's `done.set()` → it hangs forever.
 The doc's three load-bearing lines are reproduced verbatim below; the only
 addition is the background `events()` pump that the recovery client needs for
 the facade to work at all. Standing requirement: explicit `plugins` (`[]` here).
-Standing deviations (see README): `**CONN`, GLM literal.
+Standing deviations (see README): `**CONN`, `**AUTH` (pass: cred knob), the model/provider literal.
 """
 import asyncio
 from jaato_sdk import IPCRecoveryClient
-from _config import CONN
+from _config import CONN, AUTH
 
 
 async def _pump(client):
@@ -47,7 +47,7 @@ async def _pump(client):
 
 async def main():
     async with IPCRecoveryClient.session(**CONN,
-            profile={"model": "glm-5-turbo", "provider": "zhipuai", "plugins": []},
+            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH},
             on_status_change=lambda st: print(st.state)) as s:   # auto-reconnect across daemon restarts
         pump = asyncio.create_task(_pump(s.client))
         try:

@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Smoke runner — run every example end-to-end and assert real behaviour.
+
+Not mocked: each example actually round-trips against the dedicated daemon
+(`./daemon.sh start` first). Each entry has a validator that checks the real
+output (a model reply, a fired permission gate, a spawned cascade stage), not
+just exit code. Exits non-zero if any example fails.
+
+    ./daemon.sh start
+    ./.venv/bin/python smoke.py
+"""
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+PY = sys.executable
+DAEMON_LOG = "/tmp/jaato-examples.log"   # matches daemon.sh
+
+
+def run(script: str, timeout: int):
+    t0 = time.time()
+    p = subprocess.run([PY, str(HERE / script)], capture_output=True, text=True,
+                       cwd=HERE, timeout=timeout)
+    return p.returncode, p.stdout, p.stderr, time.time() - t0
+
+
+def nonempty(out):
+    return bool(out.strip())
+
+
+def two_lines(out):
+    return len([l for l in out.splitlines() if l.strip()]) >= 2
+
+
+def has(*subs):
+    return lambda out: any(s.lower() in out.lower() for s in subs)
+
+
+def cascade_spawned(out):
+    # ex09 triggers stage 1; the reactor spawns the 'summarize' stage decoupled
+    # in the daemon. Confirm by watching the daemon log for that session.
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        try:
+            log = Path(DAEMON_LOG).read_text(errors="ignore")
+        except FileNotFoundError:
+            log = ""
+        # a summarize-profile session created after the extract stage
+        if "profile=summarize" in log or "agent=summarize" in log or "summarize (" in log:
+            return True
+        time.sleep(3)
+    return False
+
+
+# (script, timeout_s, validator)
+EXAMPLES = [
+    ("ex01_basic_ask.py",       120, two_lines),
+    ("ex02_streaming.py",       120, nonempty),
+    ("ex03_persona_memory.py",  150, nonempty),
+    ("ex04_typed_completion.py",120, has("alice", "30")),
+    ("ex05_client_tool.py",     120, has("sunny", "24", "weather")),
+    ("ex06_multitool.py",       200, nonempty),
+    ("ex07_permissions.py",     150, has("[permission]")),
+    ("ex08_subagent.py",        240, nonempty),
+    ("ex09_cascade.py",         200, cascade_spawned),
+    ("ex10_recovery.py",        150, has("connected")),
+]
+
+
+def main():
+    results = []
+    for script, timeout, validator in EXAMPLES:
+        try:
+            rc, out, err, dt = run(script, timeout)
+        except subprocess.TimeoutExpired:
+            results.append((script, "TIMEOUT", timeout))
+            print(f"✗ {script:28} TIMEOUT after {timeout}s")
+            continue
+        ok = rc == 0 and validator(out)
+        results.append((script, "PASS" if ok else "FAIL", dt))
+        mark = "✓" if ok else "✗"
+        print(f"{mark} {script:28} {'PASS' if ok else 'FAIL'}  ({dt:.0f}s, rc={rc})")
+        if not ok:
+            if err.strip():
+                print(f"    stderr: {err.strip().splitlines()[-1][:200]}")
+            if out.strip():
+                print(f"    stdout: {out.strip().splitlines()[-1][:200]}")
+    n_pass = sum(1 for _, s, _ in results if s == "PASS")
+    print(f"\n{n_pass}/{len(results)} passed")
+    return 0 if n_pass == len(results) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

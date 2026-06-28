@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "cascade.after_extract",
+      "match": { "event_type": "agent.completed", "where": "source_agent == 'extract'" },
+      "action": { "script": "scripts/spawn_summarize.py" }
+    }
+  ]
+}

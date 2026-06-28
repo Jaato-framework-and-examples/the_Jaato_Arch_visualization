@@ -17,16 +17,16 @@ Doc snippet (verbatim shape):
             }]) as s:
         print(await s.ask("Weather in Paris?"))
 
-Standing deviations (see README): `**CONN`, GLM literal, `plugins:[]`.
+Standing deviations (see README): `**CONN`, `**AUTH` (pass: cred knob), the model/provider literal. (`plugins` is the required form, not a deviation.)
 """
 import asyncio
 from jaato_sdk import IPCClient
-from _config import CONN
+from _config import CONN, AUTH
 
 
 async def main():
     async with IPCClient.session(**CONN,
-            profile={"model": "glm-5-turbo", "provider": "zhipuai", "plugins": []},
+            profile={"model": "openai/gpt-4o-mini", "provider": "openrouter", "plugins": [], **AUTH},
             client_tools=[{
                 "name": "get_weather", "description": "Return the weather for a city.",
                 "parameters": {"type": "object",

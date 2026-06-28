@@ -1,0 +1,26 @@
+{
+  "name": "extract",
+  "description": "Cascade stage 1: extract facts from a document, completion-gated on a `facts` payload.",
+  "model": "openai/gpt-4o-mini",
+  "provider": "openrouter",
+  "max_turns": 3,
+  "plugins": [],
+  "plugin_configs": {
+    "openrouter": {
+      "api_key": "pass://jaato/openrouter/api-key"
+    }
+  },
+  "completion_payload_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "facts"
+    ],
+    "properties": {
+      "facts": {
+        "type": "string",
+        "description": "The extracted facts, as a concise string."
+      }
+    }
+  }
+}

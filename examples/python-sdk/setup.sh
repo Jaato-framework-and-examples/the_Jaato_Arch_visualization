@@ -14,5 +14,5 @@ python3 -m venv .venv
 
 echo
 echo "built. next:"
-echo "  ./daemon.sh start          # spin the dedicated GLM daemon"
+echo "  ./daemon.sh start          # spin the dedicated OpenRouter daemon"
 echo "  ./.venv/bin/python smoke.py # run every example, assert green"

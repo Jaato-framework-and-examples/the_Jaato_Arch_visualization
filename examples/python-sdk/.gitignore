@@ -1,3 +1,10 @@
 .venv/
 __pycache__/
 *.pyc
+# jaato runtime artifacts written into the workspace .jaato/ at session time
+.jaato/sessions/
+.jaato/logs/
+.jaato/cascade_state/
+.jaato/.artifact_tracker.json
+trip.md
+.jaato/**/backups/
