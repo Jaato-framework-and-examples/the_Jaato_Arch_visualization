@@ -247,6 +247,12 @@ const cid = randomUUID();
 await using s = await JaatoClient.session({ url, agent: "extract", profile: "extract", cascadeDriverId: cid });
 await s.complete("Extract the facts from this doc: …");   // stage 1's first message (its task)
 ```
+For the typed handoff to work, the **producer's profile must declare a `completion_payload_schema`** — without it `signal_completion` is a legacy summary and `event.get("facts")` below is `None`:
+```yaml
+# .jaato/profiles/extract.yaml (excerpt)
+completion_payload_schema: { type: object, properties: { facts: { type: string } }, required: [facts] }
+# → the extract agent then calls signal_completion(facts="…")  — a schema's top-level props are FLAT args, not wrapped
+```
 The hop lives in a **deployment reactor** that runs **inside the daemon** (Python, regardless of your client language) — `.jaato/reactors/` + `.jaato/scripts/`:
 ```jsonc
 // .jaato/reactors/cascade.json — fire when the 'extract' stage signals done

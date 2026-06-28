@@ -236,6 +236,12 @@ async with IPCClient.session(agent="extract", profile="extract",   # persona (so
                              cascade_driver_id=cid) as s:
     await s.complete("Extract the facts from this doc: …")          # stage 1's first message (its task)
 ```
+For the typed handoff to work, the **producer's profile must declare a `completion_payload_schema`** — without it `signal_completion` is a legacy summary and `event.get("facts")` below is `None`:
+```yaml
+# .jaato/profiles/extract.yaml (excerpt)
+completion_payload_schema: { type: object, properties: { facts: { type: string } }, required: [facts] }
+# → the extract agent then calls signal_completion(facts="…")  — a schema's top-level props are FLAT args, not wrapped
+```
 A **deployment reactor** (`.jaato/reactors/` + `.jaato/scripts/`) spawns each next stage inside the daemon when the prior one completes:
 ```jsonc
 // .jaato/reactors/cascade.json — fire when the 'extract' stage signals done
