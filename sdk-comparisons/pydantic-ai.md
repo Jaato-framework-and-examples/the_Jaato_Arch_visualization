@@ -41,6 +41,8 @@ from jaato_sdk import ask
 print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}))
 ```
 
+**Runnable:** [`examples/python-sdk/ex01_basic_ask.py`](../examples/python-sdk/ex01_basic_ask.py)
+
 **Side by side.** Pydantic AI is one in-process call returning a typed `result` (`.output` is `str` here). jaato opens an isolated session on a (possibly auto-started) daemon and `ask`s. The agent runs *in your process* in one case, *behind a boundary* in the other.
 
 ## 2. Streaming the reply
@@ -58,6 +60,8 @@ async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "
     async for chunk in s.stream("Tell me a short story."):
         print(chunk, end="", flush=True)
 ```
+
+**Runnable:** [`examples/python-sdk/ex02_streaming.py`](../examples/python-sdk/ex02_streaming.py)
 
 **Side by side.** Both are async iteration over text deltas. Pydantic AI's `run_stream` is an async context manager yielding a typed `StreamedRunResult` (it can also stream *structured* output as it's validated); jaato's `s.stream(...)` is an `AsyncIterable[str]` of model-output chunks that raises `AgentError`/`PermissionUnhandled` after it drains.
 
@@ -78,6 +82,8 @@ async with IPCClient.session(agent="pirate", profile={"model": "gpt-4o", "provid
     await s.ask("Hello")
     print(await s.ask("And your name?"))            # same session → it remembers
 ```
+
+**Runnable:** [`examples/python-sdk/ex03_persona_memory.py`](../examples/python-sdk/ex03_persona_memory.py)
 
 **Side by side.** Pydantic AI keeps the conversation in *your* hands — you pass `message_history=result.all_messages()` into the next run (typed `ModelMessage` objects you can persist however you like). jaato keeps history **in the daemon session**; a second `ask` continues it. A system prompt is a reusable **persona** (`agent="pirate"`), not constructor config.
 
@@ -101,6 +107,8 @@ async with IPCClient.session(profile="person-extractor") as s:
     person = await s.complete("Alice is 30.")       # dict | None (server-validated payload)
     print(person["name"], person["age"])
 ```
+
+**Runnable:** [`examples/python-sdk/ex04_typed_completion.py`](../examples/python-sdk/ex04_typed_completion.py)
 
 **Side by side.** This is where the two are closest in *spirit* and furthest in *locus*. Pydantic AI validates the model's output against a Pydantic model **in your process** (`output_type` → `result.output`, by default via the model's tool-calling). jaato makes typed output a **server-side completion gate**: the agent must call `signal_completion(payload)`, the daemon validates it (and runs completion processors), and a wrong-shape payload is bounced back to the model to retry — the agent can't "finish" malformed, regardless of which client is connected. Under the hood both lean on **JSON Schema** at the model layer — Pydantic AI *generates* it from your model, jaato authors it directly — and both can push it down as **strict / grammar-constrained decoding** when the provider supports it. The difference is what enforces and what you get back: Pydantic AI validates with **Pydantic** in your process and hands you a **typed object**; jaato validates **server-side with `jsonschema`** (not Pydantic) and hands you a **dict**.
 
@@ -132,6 +140,8 @@ async with IPCClient.session(
     print(await s.ask("Weather in Paris?"))
 ```
 
+**Runnable:** [`examples/python-sdk/ex05_client_tool.py`](../examples/python-sdk/ex05_client_tool.py)
+
 **Side by side.** Pydantic AI derives the tool schema from your function's **type hints** (`@agent.tool_plain` for context-free tools; `@agent.tool` to receive a `RunContext` with injected `deps`), and runs the call inline in your process. jaato's `client_tools` registers a schema **the daemon's agent loop invokes**, calling back into your client for the handler — the loop, retries, and result-threading happen server-side. (jaato can also use **server-side** plugins — `cli`, `web_search`, … — via the profile's `plugins`, with no client code; Example 6.)
 
 ## 6. Multi-tool agent loop
@@ -153,6 +163,8 @@ async with IPCClient.session(profile={
         "plugins": ["cli", "web_search", "file_edit", "todo"]}) as s:
     print(await s.ask("Plan a trip to Paris and save it to trip.md"))
 ```
+
+**Runnable:** [`examples/python-sdk/ex06_multitool.py`](../examples/python-sdk/ex06_multitool.py)
 
 **Side by side.** Pydantic AI runs the tool-calling loop **inside `run`/`run_sync`**, in your process, until the model returns a final (typed) output. In jaato the loop — model → tool calls (permission-checked, parallelizable) → results → model — runs **inside the confined runner**; you choose the tools and `ask`. The loop is your dependency's code in one case, infrastructure in the other.
 
@@ -180,6 +192,8 @@ async with IPCClient.session(
         on_permission=lambda ev: "y" if approve(ev.tool_name) else "n") as s:
     print(await s.ask("Delete temp.log"))
 ```
+
+**Runnable:** [`examples/python-sdk/ex07_permissions.py`](../examples/python-sdk/ex07_permissions.py)
 
 **Side by side.** Pydantic AI's deferred-tools model is genuinely close in spirit: a gated tool pauses the run and surfaces `DeferredToolRequests`; you gather approvals and resume with the original `message_history` + a `DeferredToolResults`. It runs **in your process** — you hold the message history and drive the resume (inline `HandleDeferredToolCalls`, or stop-the-world-and-resume for an out-of-process UI). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
 
@@ -220,6 +234,8 @@ async with IPCClient.session(agent="lead",
     await done.wait()   # the daemon auto-continues 'lead' as each subagent COMPLETES
     print("".join(out))
 ```
+
+**Runnable:** [`examples/python-sdk/ex08_subagent.py`](../examples/python-sdk/ex08_subagent.py)
 
 **Side by side.** Pydantic AI's delegation is **synchronous and in-process**: a `@lead.tool` calls `await researcher.run(...)` and blocks until it returns, rolling usage up via `ctx.usage`. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** in its own context (a per-subagent isolated runner + cgroup is designed but not yet shipped), and its result returns as a `[SUBAGENT … COMPLETED]` event the daemon uses to auto-continue the lead until it composes and `signal_completion`s. Because that spans many turns, the facade one-shots don't fit — you wait on `s.client` for the final `SESSION_TERMINATED`. (How the lead knows the targets: its **persona** gives the *role*, the **first prompt** carries the *task*, and the `subagent` plugin's `list_subagent_profiles` discovers the available **profiles** from `.jaato/profiles/`.)
 
@@ -271,6 +287,8 @@ def execute(params, event, ctx):
         cascade_driver_id=read_cascade_driver_id(ctx.workspace_path))   # cid from the workspace cascade_state, not the event
 ```
 
+**Runnable:** [`examples/python-sdk/ex09_cascade.py`](../examples/python-sdk/ex09_cascade.py)
+
 **Side by side.** `pydantic-graph` is a **typed, in-process state machine you drive** — node classes return the next node, state passed around, the whole flow one Python program. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** reacts to that completion event and spawns the successor (threading the prior stage's typed payload into a freed warm slot). The client only triggers stage 1; the pipeline then runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated/observable, and you branch or fan out by adding **rules, not code**. *(A client `for`-loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse — see the cascade docs.)*
 
 ## 10. Production: persistence, recovery, observability
@@ -293,6 +311,8 @@ async with IPCRecoveryClient.session(
     print(await s.ask("Long task…"))                            # survives a daemon bounce
 # sessions also persist server-side: detach (fire-and-forget) and re-attach by id with the low-level client.
 ```
+
+**Runnable:** [`examples/python-sdk/ex10_recovery.py`](../examples/python-sdk/ex10_recovery.py)
 
 **Side by side.** Pydantic AI gives you **first-class observability** (Logfire's LLM-aware traces, token/cost panels — and since it's OTel, any backend) but leaves **durability to you**: the run lives in your process, and you persist `all_messages()` to resume. jaato inherits durability from the **daemon**: `IPCRecoveryClient` auto-reconnects and recovers an in-flight turn across a restart; sessions persist server-side and re-attach by id; OpenTelemetry tracing is a daemon flag. Plus what Pydantic AI has no analog for: each session runs in its **own AppArmor-confinable, workspace-scoped subprocess**.
 

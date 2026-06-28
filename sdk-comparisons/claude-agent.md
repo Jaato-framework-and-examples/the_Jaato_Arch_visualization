@@ -43,6 +43,8 @@ from jaato_sdk import ask
 print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}))
 ```
 
+**Runnable:** [`examples/python-sdk/ex01_basic_ask.py`](../examples/python-sdk/ex01_basic_ask.py)
+
 **Side by side.** `query(...)` is an async iterator of **typed messages** (assistant/tool/result) — even "hello world" hands you the agent's message stream, because it's a full agent loop. jaato opens an isolated session on a (possibly auto-started) daemon and `ask`s, collapsing that stream to the answer. Claude runs **in the agent process** the SDK drives; jaato's agent runs **behind a daemon boundary**.
 
 ## 2. Streaming the reply
@@ -63,6 +65,8 @@ async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "
     async for chunk in s.stream("Tell me a short story."):
         print(chunk, end="", flush=True)
 ```
+
+**Runnable:** [`examples/python-sdk/ex02_streaming.py`](../examples/python-sdk/ex02_streaming.py)
 
 **Side by side.** The Claude Agent SDK streams **messages** by default (assistant text, tool calls, results); `include_partial_messages=True` exposes raw token deltas. jaato's `s.stream(...)` is an `AsyncIterable[str]` of model-output chunks that raises `AgentError`/`PermissionUnhandled` after it drains (the full event stream is there too, via `s.client`).
 
@@ -89,6 +93,8 @@ async with IPCClient.session(agent="pirate", profile={"model": "gpt-4o", "provid
     print(await s.ask("And your name?"))          # same session → it remembers
 ```
 
+**Runnable:** [`examples/python-sdk/ex03_persona_memory.py`](../examples/python-sdk/ex03_persona_memory.py)
+
 **Side by side.** The Claude Agent SDK holds the conversation in a live `ClaudeSDKClient` (and can **resume** later from `ResultMessage.session_id` — restoring files read, analysis done, actions taken). jaato keeps state **in the daemon session**; a second `ask` continues it. A system prompt is an option in one case, a reusable **persona** (`agent="pirate"`) in the other.
 
 ## 4. Structured / typed output
@@ -114,6 +120,8 @@ async with IPCClient.session(profile="person-extractor") as s:
     person = await s.complete("Alice is 30.")   # dict | None (server-validated payload)
     print(person["name"], person["age"])
 ```
+
+**Runnable:** [`examples/python-sdk/ex04_typed_completion.py`](../examples/python-sdk/ex04_typed_completion.py)
 
 **Side by side.** This is where the two diverge most. The Claude Agent SDK has **no `output_type`** — it's built to *do agentic work* (edit files, run commands), not to extract typed objects, so you prompt for a shape and validate it yourself (or capture it through a custom tool). jaato makes typed output a **server-side completion gate**: the agent must call `signal_completion(payload)`, the daemon validates it against the JSON schema and bounces a wrong shape back to the model to retry — the agent can't "finish" malformed, regardless of which client is connected.
 
@@ -148,6 +156,8 @@ async with IPCClient.session(
     print(await s.ask("Weather in Paris?"))
 ```
 
+**Runnable:** [`examples/python-sdk/ex05_client_tool.py`](../examples/python-sdk/ex05_client_tool.py)
+
 **Side by side.** The Claude Agent SDK wraps custom tools as an **in-process MCP server** (`@tool` + `create_sdk_mcp_server`, exposed as `mcp__<server>__<name>`) — and ships a large built-in toolset besides. jaato's `client_tools` registers a schema **the daemon's agent loop invokes**, calling back into your client for the handler — the loop, retries, and result-threading happen server-side. (jaato can also use **server-side** plugins — `cli`, `web_search`, … — via the profile's `plugins`, with no client code; Example 6.)
 
 ## 6. Multi-tool agent loop
@@ -166,6 +176,8 @@ async with IPCClient.session(profile={
         "plugins": ["cli", "web_search", "file_edit", "todo"]}) as s:
     print(await s.ask("Plan a trip to Paris and save it to trip.md"))
 ```
+
+**Runnable:** [`examples/python-sdk/ex06_multitool.py`](../examples/python-sdk/ex06_multitool.py)
 
 **Side by side.** Both are *batteries-included* loops. The Claude Agent SDK runs the **Claude Code agent loop** — a rich built-in toolset (files, shell, web, todo, …) gated by your `allowed_tools` — in the agent process. In jaato the loop runs **inside the confined runner**; you pick the plugin set and `ask`. The difference is mostly *whose process and which model*: Claude + the Claude Code toolset vs your model + your jaato plugins.
 
@@ -193,6 +205,8 @@ async with IPCClient.session(
         on_permission=lambda ev: "y" if approve(ev.tool_name) else "n") as s:
     print(await s.ask("Delete temp.log"))
 ```
+
+**Runnable:** [`examples/python-sdk/ex07_permissions.py`](../examples/python-sdk/ex07_permissions.py)
 
 **Side by side.** These are almost the *same idea*: the Claude Agent SDK's `can_use_tool(tool_name, input, context)` returns `PermissionResultAllow`/`Deny` (with `permission_mode` presets like `acceptEdits`/`plan`/`bypassPermissions`), exactly like jaato's `on_permission(ev) → "y"/"n"`. Both run the decision **in your client**. jaato adds a daemon-side path the SDK has no analog for: for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc).
 
@@ -233,6 +247,8 @@ async with IPCClient.session(agent="lead",
     await done.wait()   # the daemon auto-continues 'lead' as each subagent COMPLETES
     print("".join(out))
 ```
+
+**Runnable:** [`examples/python-sdk/ex08_subagent.py`](../examples/python-sdk/ex08_subagent.py)
 
 **Side by side.** Conceptually close: the Claude Agent SDK's **subagents** (declared via `AgentDefinition`, each with its own prompt + tools) are invoked by the lead through the **`Task` tool**, running within the agent process. jaato's are **async and daemon-driven**: the lead persona calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** in its own context (a per-subagent isolated runner + cgroup is designed but not yet shipped), and its result returns as a `[SUBAGENT … COMPLETED]` event the daemon uses to auto-continue the lead until it composes and `signal_completion`s. Because that spans many turns, the facade one-shots don't fit — you wait on `s.client` for the final `SESSION_TERMINATED`. (How the lead knows the targets: its **persona** gives the *role*, the **first prompt** carries the *task*, and the `subagent` plugin's `list_subagent_profiles` discovers the available **profiles** from `.jaato/profiles/`.)
 
@@ -279,6 +295,8 @@ def execute(params, event, ctx):
         cascade_driver_id=read_cascade_driver_id(ctx.workspace_path))   # cid from the workspace cascade_state, not the event
 ```
 
+**Runnable:** [`examples/python-sdk/ex09_cascade.py`](../examples/python-sdk/ex09_cascade.py)
+
 **Side by side.** The Claude Agent SDK has **no pipeline object** — sequential work is *you* chaining `query` calls in code, or the agent driving subagents via the `Task` tool; both run **in the agent process**. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** reacts to that completion and spawns the successor (threading the prior stage's typed payload into a freed warm slot). The client only triggers stage 1; the pipeline then runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated/observable, and you branch or fan out by adding **rules, not code**. *(A client `for`-loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse — see the cascade docs.)*
 
 ## 10. Production: persistence, recovery, observability
@@ -302,6 +320,8 @@ async with IPCRecoveryClient.session(
     print(await s.ask("Long task…"))                            # survives a daemon bounce
 # sessions also persist server-side: detach (fire-and-forget) and re-attach by id with the low-level client.
 ```
+
+**Runnable:** [`examples/python-sdk/ex10_recovery.py`](../examples/python-sdk/ex10_recovery.py)
 
 **Side by side.** The Claude Agent SDK gives you **hooks** (PreToolUse/PostToolUse/Stop — for tracing and control) and **session resume** (restore full context by id), with observability typically via the CLI's OpenTelemetry. jaato inherits durability from the **daemon**: `IPCRecoveryClient` auto-reconnects and recovers an in-flight turn across a *daemon* restart; sessions persist server-side and re-attach by id; OTel tracing is a daemon flag. The isolation differs: the Claude Agent SDK runs one agent process; jaato runs each session in its **own AppArmor-confinable, workspace-scoped subprocess**, multi-tenant.
 
