@@ -5,7 +5,7 @@
 
 ## What it is
 
-Zoom in on one link of a cascade. A cascade chains top-level agent sessions by events; a **stage** is *one* of those sessions. Concretely it is a **headless agent session** — a fully-functional `JaatoSession` running its own runner subprocess (AppArmor-confinable), with no human client attached (its client-facing events go to the synthetic `_headless` sink, `session_manager.py:4688`). It has a clear **input boundary** (the first message it is spawned with), an **execution body** (its persona + profile do the work), and an **output boundary** (`signal_completion` emits a typed payload). The stage is intentionally ignorant of the cascade: it just does its job and signals done. The *next* stage exists only because a reactor reacted to that "done".
+Zoom in on one link of a cascade. A cascade chains top-level agent sessions by events; a **stage** is *one* of those sessions. Concretely it is a **headless agent session** — a fully-functional `JaatoSession` running its own runner subprocess (AppArmor-confinable), with no human client attached (its client-facing events go to the synthetic `_headless` sink, `session_manager.py:4764`). It has a clear **input boundary** (the first message it is spawned with), an **execution body** (its persona + profile do the work), and an **output boundary** (`signal_completion` emits a typed payload). The stage is intentionally ignorant of the cascade: it just does its job and signals done. The *next* stage exists only because a reactor reacted to that "done".
 
 We use the **`summarize`** stage of the runnable `examples/python-sdk/` cascade as the worked example. It runs *after* `extract` has pulled the facts from a document; it receives those facts as its first message, summarises them, and emits a typed `summary` payload that the next reactor hands to `verify`.
 
@@ -65,7 +65,7 @@ The stage ends when its agent calls `signal_completion`. Because the profile dec
     "properties": { "summary": { "type": "string", "description": "The summary of the extracted facts." } } } }
 ```
 
-Optionally, a profile can declare **completion processors** that run in order on the validated payload (e.g. an extra real-value check, a renderer that writes a file, a persister) — each able to `fail_completion` and bounce the agent back to retry. The reference stage keeps it to schema validation; processors are the post-validation hook a production stage uses to transform or persist its output. The daemon then emits `AgentCompletedEvent` with the validated `payload` and **hoists it onto the bus event** (`events.py:385`), so the next reactor reads the prior stage's fields as `event.get(<field>)`.
+Optionally, a profile can declare **completion processors** that run in order on the validated payload (e.g. an extra real-value check, a renderer that writes a file, a persister) — each able to `fail_completion` and bounce the agent back to retry. The reference stage keeps it to schema validation; processors are the post-validation hook a production stage uses to transform or persist its output. The daemon then emits `AgentCompletedEvent` with the validated `payload` and **hoists it onto the bus event** (`server/core.py` `_server_event_to_bus_event`), so the next reactor reads the prior stage's fields as `event.get(<field>)`.
 
 ### The trigger — this stage's `AgentCompletedEvent` drives the next stage
 
@@ -149,6 +149,6 @@ flowchart LR
 - `examples/python-sdk/.jaato/agents/summarize.md` — the stage persona.
 - `examples/python-sdk/.jaato/profiles/verify.json` — the `verdict` (`pass`/`fail`) payload: the successor stage whose output a deployment can branch the cascade back on.
 - `examples/python-sdk/.jaato/scripts/spawn_verify.py` — the outbound rule's handler (`event.get("summary")` → spawn `verify`) that consumes this stage's completion.
-- `jaato/jaato-server/server/session_manager.py:4688` — `create_headless_session`: builds the stage's session, `attached_clients = {"_headless"}`, dispatches `initial_prompt`.
-- `jaato/jaato-sdk/jaato_sdk/events.py:385` / `:455` — `AgentCompletedEvent` (typed `payload`, hoisted onto the event — the output boundary) + `SlotSettledEvent` (the event the two-event warm-slot spawn fires on).
+- `jaato/jaato-server/server/session_manager.py:4764` — `create_headless_session`: builds the stage's session, `attached_clients = {"_headless"}`, dispatches `initial_prompt`.
+- `jaato/jaato-sdk/jaato_sdk/events.py` — `AgentCompletedEvent` (typed `payload`, class :392 — the output boundary; hoisted onto the bus event by `server/core.py` `_server_event_to_bus_event`) + `SlotSettledEvent` (class :518, the event the two-event warm-slot spawn fires on).
 - `jaato/jaato-server/shared/lifecycle_tools.py` — `signal_completion`: validates the typed payload against the profile's `completion_payload_schema`.
