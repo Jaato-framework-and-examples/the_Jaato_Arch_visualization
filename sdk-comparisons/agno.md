@@ -285,17 +285,19 @@ async with IPCRecoveryClient.session(
 
 ---
 
-## When each shines
+## Coming from Agno
 
-| You want… | Reach for |
-|---|---|
-| A fast, batteries-included multi-agent toolkit in Python — agents, **Teams** (coordinate/route/collaborate), memory, knowledge/RAG, all in-process | **Agno** |
-| First-class multi-agent *teams* as the core abstraction | **Agno** |
-| A self-hostable runtime + control plane for *your* agent code (AgentOS — tracing, scheduling, RBAC, per-user isolation) | **Agno** |
-| Multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / cascades / crash-recovery; provider- and runtime-agnostic (local GPUs); server-enforced typed completion gates; a thin client with per-agent memory isolated in AppArmor-confinable server-side runners | **jaato-sdk** |
+Not a scorecard — if you already think in Agno, here's what actually changes when you move to jaato, and what it buys you:
 
-**Honest caveats.**
+- **Your `output_schema` becomes a server-enforced completion gate.** Agno validates a Pydantic model *in your process* and hands you a typed object; jaato's `completion_payload_schema` validates *server-side* — the agent must `signal_completion(payload)`, the daemon bounces a wrong-shape payload back to the model to retry, and it can't "finish" malformed regardless of which client is attached. Same instinct, enforced at the boundary (you get a validated dict, not a typed object).
+- **Your in-process `Agent.run` becomes an isolated daemon session.** Instead of constructing an `Agent` and calling it inside your interpreter, you open a session on a long-lived daemon and `ask` — the agent loop, tools, memory, and persistence live server-side in a per-session, AppArmor-confinable, workspace-scoped subprocess. The session *is* the memory (a second `ask` continues it), so there's no `db=`/`session_id`/`add_history_to_context` wiring; a system prompt becomes a reusable persona file, not constructor config.
+- **Agno Teams and Workflows become daemon-driven delegation and reactor cascades.** A `Team(mode="coordinate"/"route"/"collaborate")` becomes a supervisor persona that `spawn_subagent`s and ends its turn, each specialist running server-side in its own context while the daemon auto-continues the lead. A `Workflow` of `Step`s becomes an event- and reactor-driven cascade: each stage is an isolated headless session that just `signal_completion`s 'done', ignorant of what comes next, while a reactor reacts to that event and spawns the successor — you branch and fan out by adding rules, not code, and the pipeline survives the client disconnecting.
+- **AgentOS-in-your-process becomes a hostable, provider- and runtime-agnostic daemon.** Where AgentOS runs *your* Python agent app with per-user/session isolation and RBAC, jaato's daemon runs agents as isolated subprocesses you connect to — provider-agnostic, local-GPU-capable, crash-recoverable (`IPCRecoveryClient` auto-reconnects and recovers an in-flight turn across a daemon bounce; sessions persist and re-attach by id). Permissions and human-in-the-loop are built in: an `on_permission` callback answers inline, and headless sessions can escalate as a bus event a reactor parks on a `HandoffGate` — approved out-of-band via a webhook bridge, then resumed by id with no client attached.
+
+**What to keep in mind (honest trade-offs).**
 - Both sides are Python, so this is a genuine same-language comparison.
-- **Agno moves quickly** — v2.0 (Sept 2025) was a full rewrite of `Agent`/`Team`/`Workflow`. The snippets use the current v2 API (`output_schema`, `db=`, `add_history_to_context`, `Team(mode=…)`, `requires_confirmation`/`continue_run`); verify exact signatures (especially the HITL pause/continue and `Workflow`/`Step` APIs) against the version you install.
-- **jaato-sdk needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency the in-process framework doesn't have; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The facade keeps the common path to one `async with`.
-- Different runtime models: Agno runs **your** agent code (and tools) in your process (or in AgentOS, isolating users/sessions within that service); jaato runs agents as **isolated subprocesses** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app.
+- jaato needs a **running daemon** (auto-started in these snippets). For a single throwaway script that's a real dependency the in-process framework doesn't have; for a fleet of isolated, recoverable, multi-tenant agents it's the point — and the facade keeps the common path to one `async with`.
+- The runtime models differ: Agno runs **your** agent code and tools in your process (or in AgentOS, isolating users/sessions *within* that service); jaato runs each agent as an **isolated subprocess** behind the daemon, so a tool/agent crash or memory blowup is contained server-side, not in your app.
+- **Agno moves quickly** — v2.0 (Sept 2025) was a full rewrite of `Agent`/`Team`/`Workflow`. The snippets here use the current v2 API (`output_schema`, `db=`, `add_history_to_context`, `Team(mode=…)`, `requires_confirmation`/`continue_run`); verify exact signatures — especially the HITL pause/continue and `Workflow`/`Step` APIs — against the version you install.
+- You trade typed objects for dicts: jaato validates server-side with `jsonschema` and hands back a validated **dict**, not a Pydantic instance — so the in-process ergonomics of typed attribute access move to the daemon boundary.
+- Observability shifts from a library to a daemon flag: Agno ships **broad OpenTelemetry** out of the box (Phoenix, Langfuse, Logfire, SigNoz, …) wired into your process; in jaato OTel tracing is a property of the daemon you point at, not something you import.

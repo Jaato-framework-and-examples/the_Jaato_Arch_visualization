@@ -307,17 +307,17 @@ async with IPCRecoveryClient.session(
 
 ---
 
-## When each shines
+## Coming from the Claude Agent SDK
 
-| You want… | Reach for |
-|---|---|
-| A coding/agentic harness with Claude + a rich built-in toolset (files, shell, web), MCP, subagents, hooks — minimal setup | **Claude Agent SDK** |
-| The Claude Code agent loop, programmatically — `permission_mode`, `can_use_tool`, session resume | **Claude Agent SDK** |
-| Tight first-party Claude / MCP integration | **Claude Agent SDK** |
-| Provider- and runtime-agnostic agents (any model, local GPUs); multi-tenant, isolated, recoverable agents behind a boundary; built-in permissions / event-driven cascades / crash-recovery; server-enforced typed completion gates; a thin client with per-agent memory isolated in AppArmor-confinable server-side runners | **jaato-sdk** |
+This is the closest peer in the series — both are full agent **runtimes** (built-in tools, permission callbacks, subagents, hooks, sessions), not libraries you assemble a loop from. So this isn't a scorecard: if you already think in the Claude Agent SDK, here's what actually changes when you move to jaato, and what it buys you:
 
-**Honest caveats.**
+- **Claude-on-the-`claude`-process becomes provider/runtime-agnostic.** The SDK is Claude-model-centric and drives the one `claude` CLI agent process; jaato's loop runs server-side against any model/provider (OpenAI, local GPUs, …) chosen per session via the profile. Same batteries-included agent loop — you just stop being pinned to one model and one process.
+- **The single in-process agent becomes confined, multi-tenant per-session subprocesses.** The SDK runs one Claude agent process per client; jaato runs each session in its **own AppArmor-confinable, workspace-scoped subprocess** behind a daemon boundary — isolated, persistent, and re-attachable by id. Your `ClaudeSDKClient` collapses to a thin async client; the loop, tools, isolation, and memory all live in the daemon.
+- **`@tool`/MCP + `can_use_tool`/`permission_mode` map almost one-to-one — plus a daemon-side gate the SDK has no analog for.** Your in-process MCP tools become jaato `client_tools` the daemon's loop calls back into; `can_use_tool(...) → Allow/Deny` becomes `on_permission(ev) → "y"/"n"`, still decided **in your client**. What's new: for *headless* sessions an escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band**, then drive the same session's retry by id — pause→approve→resume with no client attached.
+- **No `output_type` → a server-enforced `completion_payload_schema`.** The SDK has no first-class typed output; you prompt for a shape and validate it in your process. jaato makes typed output a **server-side completion gate**: the agent must `signal_completion(payload)`, the daemon validates against the JSON schema and bounces a wrong shape back to the model — it can't "finish" malformed regardless of which client is attached (you get a validated dict). And **subagents** (`AgentDefinition` + the `Task` tool) become **daemon-driven** delegation — the lead spawns specialists that run server-side and auto-continue it on completion — composing into reactor-driven **cascades** you branch by adding rules, not code.
+
+**What to keep in mind (honest trade-offs).**
 - Both sides are Python (the Claude Agent SDK also ships TypeScript), so this is a genuine same-language comparison.
-- **The Claude Agent SDK is evolving** (renamed from the Claude Code SDK; options have shifted). The snippets use the current API (`query`/`ClaudeSDKClient`, `ClaudeAgentOptions`, `@tool`/`create_sdk_mcp_server`, `can_use_tool`/`permission_mode`, `AgentDefinition`, hooks); verify exact signatures against the version you install. It is **Claude-model-centric** and drives the `claude` CLI agent process; it has no first-class typed-output (`output_type`) primitive.
-- **jaato-sdk needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency; for a fleet of isolated, recoverable, multi-tenant agents it's the point. The facade keeps the common path to one `async with`.
-- Closest peer, clearest split: both are full agent runtimes, but the Claude Agent SDK is Claude + the Claude Code toolset in one process, while jaato is provider/runtime-agnostic and multi-tenant, with each agent in an isolated server-side subprocess and the reactor/cascade/completion-gate machinery on top.
+- The Claude Agent SDK is **evolving** — renamed from the Claude Code SDK, with options still shifting. The snippets use the current API (`query`/`ClaudeSDKClient`, `ClaudeAgentOptions`, `@tool`/`create_sdk_mcp_server`, `can_use_tool`/`permission_mode`, `AgentDefinition`, hooks); verify exact signatures against the version you install. It stays **Claude-model-centric**, drives the `claude` CLI agent process, and offers no first-class typed-output (`output_type`) primitive.
+- jaato-sdk **needs a running daemon** (auto-started here). For a single throwaway script that's a real dependency; for a fleet of isolated, recoverable, multi-tenant agents it's the whole point. The facade keeps the common path to one `async with`.
+- Closest peer, clearest split: both are full agent runtimes, but the Claude Agent SDK is **Claude + the Claude Code toolset in one process**, while jaato is **provider/runtime-agnostic and multi-tenant**, each agent in an isolated server-side subprocess with the reactor/cascade/completion-gate machinery on top.
