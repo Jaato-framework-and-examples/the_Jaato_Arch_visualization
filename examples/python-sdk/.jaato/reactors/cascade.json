@@ -5,6 +5,11 @@
       "id": "cascade.after_extract",
       "match": { "event_type": "agent.completed", "where": "source_agent == 'extract'" },
       "action": { "script": "scripts/spawn_summarize.py" }
+    },
+    {
+      "id": "cascade.after_summarize",
+      "match": { "event_type": "agent.completed", "where": "source_agent == 'summarize'" },
+      "action": { "script": "scripts/spawn_verify.py" }
     }
   ]
 }

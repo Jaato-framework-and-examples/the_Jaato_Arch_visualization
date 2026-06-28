@@ -97,13 +97,18 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
 - **ex09 — `reactors.json` requires `"version": 1`.** The doc's reactor snippet
   omits it; without it the rule file fails to load (`Unsupported reactors.json
   version: None`) and the cascade never fires.
-- **ex09 — typed-payload handoff drops the payload (under investigation).** The
-  cascade *structure* works (the reactor fires and spawns the gated next stage,
-  decoupled), but the validated `signal_completion` payload isn't surfaced to the
-  reactor script: `event.get("facts")` returns `None` even though the extract
-  stage emitted a correct `{"facts": …}` payload. The access pattern is correct
-  (verified against `build_merged_view`); the delivered `agent.completed` event
-  carries the envelope fields but not `payload`. Flagged upstream.
+- **ex09 — typed-payload handoff needs a schema + server ≥ #414.** The cascade is
+  the full 3-stage chain extract → summarise → verify (the comparison §9 shows the
+  2-stage illustration). `event.get(<field>)` is the correct typed-handoff pattern
+  and needs both: (1) a `completion_payload_schema` with that top-level field on
+  the **producer** profile (so `signal_completion(field=…)` attaches a validated
+  typed payload) — `extract.json`→`facts`, `summarize.json`→`summary`,
+  `verify.json`→`verdict`; and (2) **server with jaato PR #414**, which hoists the
+  typed payload onto the bus event the reactor receives (before #414 it sat one
+  level too deep → `None`, a real core bug this example surfaced). **Real
+  cross-stage data flow requires server ≥ #414** (until it merges to main);
+  pre-#414 each stage still spawns (structure works) but reads `None`. Validated
+  end-to-end on #414: summarise gets the real facts, verify the real summary.
 - **ex03 — client-driven multi-turn deadlocked (now fixed upstream).** Any two
   sequential `s.ask` on one session hung on turn 2: the daemon emitted
   `TURN_COMPLETED` before clearing `_model_running`, so turn 2's send hit the
