@@ -25,8 +25,8 @@ daemon's self-signed Jaato Dev CA for `wss://`. The bearer token is read from
 | File | Frame sequence | ona.md |
 |---|---|---|
 | `ex1_basic_session.mjs` | connect → `session.new` → `message.send` → `agent.output`/`turn.completed` | §1 |
-| `ex2_attach_replay.mjs` | detach → `session.attach` (replay) | §2 |
-| `ex3_attach_followup.mjs` | `session.attach` → `message.send` (continue) | §3 |
+| `ex2_attach_replay.mjs` | detach → reconnect (`session.list` → `workspace.select`) → `session.attach` (replay) | §2 |
+| `ex3_attach_followup.mjs` | reconnect → `session.attach` → `message.send` (continue) | §3 |
 | `ex4_lifecycle.mjs` | `session.list` / `session.stop` / `session.end` | §4 |
 
 The wire frames (`connect` greeting, `command.execute`/`session.new`,
@@ -48,13 +48,12 @@ verbatim from the doc; each file's header shows the doc snippet alongside.
 
 - **ex1 + ex4** exercise the basic round-trip and the lifecycle frames
   (`session.list` → a session list, `session.stop`, `session.end`).
-- **ex2/ex3 do a COLD reattach, which currently races.** `session.attach` replays
-  history and accepts follow-up sends when the session is still loaded (warm).
-  ex2/ex3 close the socket first — which **unloads** the session — then attach by
-  id (disk-restored = **cold**). On the cold path the runner re-spawns
-  asynchronously, so two things race the restore: the replay history may not be
-  populated when state is emitted → **no replay frames** (ex2), and the restored
-  session may not be turn-ready when the follow-up lands → **the send starts no
-  turn** (ex3). The session *does* persist (it appears in `session.list`). ex2/ex3
-  send the correct doc frames and report the observed behaviour (bounded so they
-  never hang); read the output accordingly.
+- **Re-attaching across connections needs a `workspace.select` first** (ex2/ex3).
+  Each WS connection auto-provisions its own workspace, so a second connection
+  can't see a session created on the first one until it re-targets that session's
+  workspace. The reconnect sequence is: `session.list` (each entry carries its
+  `workspace_path`) → `workspace.select <that path>` → `session.attach <sid>`.
+  The daemon then restores the session from disk, replays its history (ex2), and
+  the session keeps its memory (ex3). The cold restore is asynchronous: a send
+  issued while it settles can return a recoverable `"Session not found"`, so the
+  reconnect helper resends until output arrives.

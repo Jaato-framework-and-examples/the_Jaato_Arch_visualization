@@ -7,35 +7,46 @@
 //   → {"type":"command.execute","command":"session.attach","args":["<sid>"]}
 //   → {"type":"message.send","text":"Also add tests."}     # continue the same running session
 //
-// The re-attached session keeps its memory, so the follow-up can reference the
-// earlier turn. Substitutions: see README.
-//
-// This is a COLD reattach: the session is unloaded on the socket close, then
-// disk-restored on attach. Cold reattach currently races — the async runner
-// re-spawn vs the restore/send-ready steps, so the restored session may not be
-// turn-ready when the follow-up send lands → no turn starts. (A warm reattach,
-// session still loaded, continues normally.) The bounded wait below may therefore
-// return empty; read the output accordingly.
+// The re-attached session keeps its memory, so the reply reflects the colour
+// established in the first turn. Because a WS connection auto-provisions its own
+// workspace, the reconnect first selects the session's original workspace
+// (session.list → workspace.select) before session.attach — see reattach() in
+// _ws.mjs. While the session is restoring from disk a send can come back as a
+// recoverable "Session not found"; re-attach and resend until output arrives.
+// Substitutions: see README.
 
 import { SPEC } from "./_config.mjs";
-import { connect, collectReply } from "./_ws.mjs";
+import { connect, reattach } from "./_ws.mjs";
 
-// 1) Start a session, establish a fact, then detach.
+// 1) Start a session, establish a fact, then detach (close the socket).
 const a = await connect();
 a.send({ type: "command.execute", command: "session.new", args: [], payload: { spec: SPEC } });
 const sid = (await a.until((f) => f.type === "agent.created" && f.session_id)).session_id;
 a.send({ type: "message.send", text: "My favourite colour is teal. Acknowledge in one word." });
-await collectReply(a);
+for (;;) { const f = await a.next(); if (f.type === "turn.completed") break; }
 a.close();
 console.log("detached from", sid);
 
-// 2) Re-attach and continue — the doc says the session remembers and accepts a
-//    follow-up. Bounded so a non-processing re-attach can't hang.
+// 2) Re-attach (select workspace → attach) and continue. Resend on the recoverable
+//    "Session not found" the restore raises until the follow-up turn completes.
 const b = await connect();
-b.send({ type: "command.execute", command: "session.attach", args: [sid] });
-await new Promise((r) => setTimeout(r, 2000)); // brief settle (attach emits no frame to wait on)
-b.send({ type: "message.send", text: "What is my favourite colour?" });
-const reply = (await collectReply(b, 25000)).trim();
-console.log("follow-up reply:", reply || "(no reply — cold reattach is currently racing; see README)");
+await reattach(b, sid);
+let reply = "";
+for (let attempt = 1; attempt <= 6; attempt++) {
+  b.send({ type: "message.send", text: "What is my favourite colour? Answer with just the colour." });
+  let out = "";
+  let retry = false;
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const f = await Promise.race([b.next(), new Promise((r) => setTimeout(() => r({ type: "__t" }), deadline - Date.now()))]);
+    if (f.type === "__t") break;
+    if (f.type === "error") { retry = true; break; } // recoverable: restore still settling
+    if (f.type === "agent.output") out += f.text ?? "";
+    if (f.type === "turn.completed") break;
+  }
+  if (out.trim()) { reply = out.trim(); break; }
+  if (retry) await reattach(b, sid);
+}
+console.log("follow-up reply:", reply);
 b.close();
 process.exit(0);
