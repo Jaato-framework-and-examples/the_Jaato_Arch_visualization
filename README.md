@@ -83,8 +83,10 @@ jaato/      public source repo (github: Jaato-framework-and-examples/jaato)
 
 ## Notes on accuracy
 
-Each doc is grounded in the actual source (real class/function names, `.jaato/` paths, `path:line`
-anchors) and flags anything that is design-stage-only or not yet implemented. Two terminology points to
+Each doc is grounded in the actual source: refs into the separate jaato source repos use **symbol
+anchors** (real class/function/file names — line numbers are omitted because they rot across merge
+cycles), while refs into this repo's own `examples/` and `.jaato/` assets keep precise `path:line`.
+Docs flag anything design-stage-only or not yet implemented. Two terminology points to
 keep in mind when reading: a **persona** is agent Markdown (not a class; the spawn/completion schemas
 live on the **profile**), and a **cascade** is an *asynchronous, reactor-driven* chain of headless agent
 sessions — each stage's `agent.completed` event triggers a reactor that spawns the next stage.

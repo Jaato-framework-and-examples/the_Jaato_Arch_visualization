@@ -115,12 +115,12 @@ provider dropped without a word at runtime) into loud, machine-coded errors.
   stage's payload) spawns the next stage. Sessions in one cascade share a `cascade_driver_id`.
 - **cascade-as-client is shipped (the design doc header is stale).** Promoting `cascade_driver_id` to a
   first-class observer client identity (`_cascade:{cid}`) is **implemented and tested** in jaato-server —
-  the cascade-client registry (`_cascade_clients`, `session_manager.py:318`), `register_in_process_client`
-  (`:2990`), the `cascade.register`/`unregister`/`cancel` IPC verbs (`command_router.py:217-225`,
-  `_cascade:{cid}:{client_id}` at `:540`), `cancel_cascade`, and `test_cascade_as_client_phase1.py` /
+  the cascade-client registry (`_cascade_clients`, `session_manager.py`), `register_in_process_client`,
+  the `cascade.register`/`unregister`/`cancel` IPC verbs (`command_router.py`,
+  `_cascade:{cid}:{client_id}`), `cancel_cascade`, and `test_cascade_as_client_phase1.py` /
   `phase2.py` — even though `docs/design/cascade-as-client.md` still reads "Phase 0". This is **separate**
   from how stage sessions are identified: reactor-spawned **stage** sessions attach under the synthetic
-  `_HEADLESS_CLIENT_ID` (`session_manager.py:4688`), and their events are bridged to the `_cascade:{cid}`
+  `_HEADLESS_CLIENT_ID` (`session_manager.py`), and their events are bridged to the `_cascade:{cid}`
   owner via `_dispatch_to_cascade_clients`. The two coexist by design — the CID/observer identity is
   production, and keeping the stage placeholder is intentional, not a sign of "not yet shipped".
   (Production-confirmed by the kb-orchestrator's cascade driver, which subscribes via

@@ -7,45 +7,45 @@
 
 Every LLM vendor ships its own SDK with its own types: Google's `google.genai.types.Content`, Anthropic's Messages API blocks, OpenAI's chat-completions JSON, and so on. If the agent loop spoke any one of those dialects directly, swapping models — or running a subagent on a *different* vendor than its parent — would mean rewriting the loop.
 
-A **Model Provider** is a plugin kind (`PLUGIN_KIND = "model_provider"`, `jaato-server/shared/plugins/model_provider/__init__.py:35`) that solves this by defining a single Python `Protocol`, `ModelProviderPlugin` (`base.py:152`), that every backend implements. The protocol speaks only *provider-agnostic* types — `Message`, `Part`, `FunctionCall`, `ToolResult`, `ToolSchema`, `ProviderResponse` (all in `types.py`) — and each provider converts those to and from its own SDK internally. The provider's docstring states the intent plainly: providers "encapsulate all SDK-specific logic for interacting with AI models (Google GenAI, Anthropic, OpenAI, etc.)" (`base.py:4-5`).
+A **Model Provider** is a plugin kind (`PLUGIN_KIND = "model_provider"`, `jaato-server/shared/plugins/model_provider/__init__.py`) that solves this by defining a single Python `Protocol`, `ModelProviderPlugin` (`base.py`), that every backend implements. The protocol speaks only *provider-agnostic* types — `Message`, `Part`, `FunctionCall`, `ToolResult`, `ToolSchema`, `ProviderResponse` (all in `types.py`) — and each provider converts those to and from its own SDK internally. The provider's docstring states the intent plainly: providers "encapsulate all SDK-specific logic for interacting with AI models (Google GenAI, Anthropic, OpenAI, etc.)" (`base.py`).
 
-A key design choice: providers are **stateless with respect to conversation history**. The session owns the canonical message list and passes it in full to `complete()` on every turn; providers hold only connection/auth state (`base.py:7-10`, `162-166`). This is what makes cross-provider subagents cheap — there is no per-conversation provider object to migrate.
+A key design choice: providers are **stateless with respect to conversation history**. The session owns the canonical message list and passes it in full to `complete()` on every turn; providers hold only connection/auth state (`base.py`). This is what makes cross-provider subagents cheap — there is no per-conversation provider object to migrate.
 
 ## Where it sits in the stack
 
-Directly **below** it are the raw vendor SDKs and HTTP endpoints (the Anthropic SDK, `google.genai`, OpenAI-compatible servers, local daemons). Directly **above** it is `JaatoSession`, which drives the turn loop and calls `complete()` for every model turn; `JaatoRuntime` holds the provider config and connection that all sessions share (`docs/architecture.md:247`, `253`). Sideways, it consumes the provider-agnostic type layer in `types.py` and is selected by a **Profile** (the `provider` field, e.g. `"anthropic"`), which is the same plugin-vs-profile relationship every other plugin kind has.
+Directly **below** it are the raw vendor SDKs and HTTP endpoints (the Anthropic SDK, `google.genai`, OpenAI-compatible servers, local daemons). Directly **above** it is `JaatoSession`, which drives the turn loop and calls `complete()` for every model turn; `JaatoRuntime` holds the provider config and connection that all sessions share (`docs/architecture.md`). Sideways, it consumes the provider-agnostic type layer in `types.py` and is selected by a **Profile** (the `provider` field, e.g. `"anthropic"`), which is the same plugin-vs-profile relationship every other plugin kind has.
 
 ## Responsibilities
 
-- Define one protocol (`ModelProviderPlugin`) every backend conforms to (`base.py:152`).
+- Define one protocol (`ModelProviderPlugin`) every backend conforms to (`base.py`).
 - Convert provider-agnostic types ↔ vendor SDK types, in both directions.
 - Own connection & authentication state (`initialize`, `verify_auth`, `connect`).
-- Execute a stateless turn via `complete()`, returning a classified `TurnResult` (`base.py:294-353`).
+- Execute a stateless turn via `complete()`, returning a classified `TurnResult` (`base.py`).
 - Stream tokens and honor mid-turn cancellation via `CancelToken`.
 - Count tokens, report the context-window limit, and serialize history for persistence.
-- Classify errors as transient (retry) vs terminal so the retry layer can act (`base.py:504-549`).
+- Classify errors as transient (retry) vs terminal so the retry layer can act (`base.py`).
 
 ## Key concepts & structure
 
-### The protocol surface (`base.py:152`)
+### The protocol surface (`base.py`)
 The prompt frames the surface as `create_session/send_message/send_tool_results/get_history`; the **current** source has consolidated that into a single stateless call plus lifecycle and management methods. The real surface is:
-- **Lifecycle:** `initialize(config)`, `verify_auth(...)`, `shutdown()`, `get_auth_info()` (`base.py:191-255`).
-- **Connection:** `connect(model, *, skip_model_test)`, `is_connected`, `model_name`, `list_models(prefix)` (`base.py:259-290`).
-- **Stateless completion:** `complete(messages, system_instruction, tools, *, response_schema, cancel_token, on_chunk, on_usage_update, on_function_call, on_thinking, tool_choice) -> TurnResult` (`base.py:294-353`). This is the workhorse — the session passes the full message list each turn; the provider does *not* mutate internal state.
-- **Token management:** `count_tokens(content)`, `get_context_limit()`, `get_token_usage()` (`base.py:357-382`).
-- **Serialization:** `serialize_history(history)` / `deserialize_history(data)`, used by the session for disk persistence in a provider-independent (JSON) format (`base.py:387-410`).
-- **Capabilities:** `supports_structured_output()`, `supports_streaming()`, `supports_stop()`, `supports_thinking()` (`base.py:414-482`).
+- **Lifecycle:** `initialize(config)`, `verify_auth(...)`, `shutdown()`, `get_auth_info()` (`base.py`).
+- **Connection:** `connect(model, *, skip_model_test)`, `is_connected`, `model_name`, `list_models(prefix)` (`base.py`).
+- **Stateless completion:** `complete(messages, system_instruction, tools, *, response_schema, cancel_token, on_chunk, on_usage_update, on_function_call, on_thinking, tool_choice) -> TurnResult` (`base.py`). This is the workhorse — the session passes the full message list each turn; the provider does *not* mutate internal state.
+- **Token management:** `count_tokens(content)`, `get_context_limit()`, `get_token_usage()` (`base.py`).
+- **Serialization:** `serialize_history(history)` / `deserialize_history(data)`, used by the session for disk persistence in a provider-independent (JSON) format (`base.py`).
+- **Capabilities:** `supports_structured_output()`, `supports_streaming()`, `supports_stop()`, `supports_thinking()` (`base.py`).
 
-(The `docs/architecture.md:359-372` sequence diagram still narrates the older `send_message`/`send_tool_results` shape — conceptually identical loop, but the authoritative method today is `complete()`.)
+(The `docs/architecture.md` sequence diagram still narrates the older `send_message`/`send_tool_results` shape — conceptually identical loop, but the authoritative method today is `complete()`.)
 
 ### The provider-agnostic type layer (`types.py`)
-These replace SDK-specific types so the rest of jaato never imports a vendor SDK: `Role` (user/model/tool), `Message` (a list of `Part`s, plus `model`/`provider` fields so cross-provider history records each message's origin, `types.py:305-327`), `Part` (text / `function_call` / `function_response` / `thought` / inline data), `FunctionCall`, `ToolResult`, `ToolSchema` (provider-agnostic function declaration, `types.py:160`), `ProviderResponse` (unified response with ordered `parts`, `usage`, `finish_reason`, optional `structured_output`/`thinking`), `TokenUsage`, `FinishReason`, and `TurnResult`/`TurnOutcome` (the discriminated turn outcome the loop pattern-matches on, `types.py:449-519`).
+These replace SDK-specific types so the rest of jaato never imports a vendor SDK: `Role` (user/model/tool), `Message` (a list of `Part`s, plus `model`/`provider` fields so cross-provider history records each message's origin, `types.py`), `Part` (text / `function_call` / `function_response` / `thought` / inline data), `FunctionCall`, `ToolResult`, `ToolSchema` (provider-agnostic function declaration, `types.py`), `ProviderResponse` (unified response with ordered `parts`, `usage`, `finish_reason`, optional `structured_output`/`thinking`), `TokenUsage`, `FinishReason`, and `TurnResult`/`TurnOutcome` (the discriminated turn outcome the loop pattern-matches on, `types.py`).
 
 ### Streaming & cancellation
-When `complete()` is given an `on_chunk` callback it streams token-by-token; without it, it returns in batch (`base.py:313-314`). `CancelToken` (`types.py:673`) is a thread-safe signal: the session calls `token.cancel()`, the streaming loop breaks, and the turn resolves to `FinishReason.CANCELLED` → `TurnOutcome.CANCELLED`. Provider capability is advertised via `supports_stop()` (requires streaming, `base.py:437-446`).
+When `complete()` is given an `on_chunk` callback it streams token-by-token; without it, it returns in batch (`base.py`). `CancelToken` (`types.py`) is a thread-safe signal: the session calls `token.cancel()`, the streaming loop breaks, and the turn resolves to `FinishReason.CANCELLED` → `TurnOutcome.CANCELLED`. Provider capability is advertised via `supports_stop()` (requires streaming, `base.py`).
 
 ### Error classification for retry
-Providers MUST return `TurnResult.from_provider_response()` on success, return `TurnResult.from_exception()` for **non-transient** errors (auth, context limit, safety), and **raise** transient errors (rate limit, overload) so the `with_retry` layer retries (`base.py:316-322`). `classify_error()` and `get_retry_after()` let each provider apply vendor-specific knowledge (`base.py:504-549`).
+Providers MUST return `TurnResult.from_provider_response()` on success, return `TurnResult.from_exception()` for **non-transient** errors (auth, context limit, safety), and **raise** transient errors (rate limit, overload) so the `with_retry` layer retries (`base.py`). `classify_error()` and `get_retry_after()` let each provider apply vendor-specific knowledge (`base.py`).
 
 ### The provider catalog
 The repo ships one subdirectory per backend (`ls jaato-server/shared/plugins/model_provider/`), spanning four shapes:
@@ -55,7 +55,7 @@ The repo ships one subdirectory per backend (`ls jaato-server/shared/plugins/mod
 - **Subscription-CLI / IDE backends:** `claude_cli/` (drives the Claude Code CLI, using a Pro/Max subscription rather than API credits) and `antigravity/` (Google IDE backend, Gemini 3 + Claude via Google OAuth).
 
 ### Discovery & loading
-`discover_providers()` finds backends two ways: the `jaato.model_providers` entry-point group, then a directory scan that imports each subdir and calls its `create_provider`/`create_plugin` factory (`__init__.py:67-157`). `load_provider(name, config)` instantiates one by name and optionally calls `initialize()` (`__init__.py:169-203`). The provider's own `name` property (e.g. `"anthropic"`, `anthropic/provider.py:201-203`) is the identity used in Profiles.
+`discover_providers()` finds backends two ways: the `jaato.model_providers` entry-point group, then a directory scan that imports each subdir and calls its `create_provider`/`create_plugin` factory (`__init__.py`). `load_provider(name, config)` instantiates one by name and optionally calls `initialize()` (`__init__.py`). The provider's own `name` property (e.g. `"anthropic"`, `anthropic/provider.py`) is the identity used in Profiles.
 
 ## Lifecycle / flow
 
@@ -92,11 +92,11 @@ plugin_configs:
       thinking_budget: 10000
 ```
 
-`ProviderConfig` (`base.py:68-103`) carries the auth-side fields (`project`, `location`, `api_key`, `credentials_path`, `use_vertex_ai`, `auth_method`, `target_service_account`, plus `extra` for provider-specific config). Context-window size resolves by a uniform precedence — provider auto-detect → per-profile `context_length` → env var — via `resolve_context_window()` (`base.py:106-149`).
+`ProviderConfig` (`base.py`) carries the auth-side fields (`project`, `location`, `api_key`, `credentials_path`, `use_vertex_ai`, `auth_method`, `target_service_account`, plus `extra` for provider-specific config). Context-window size resolves by a uniform precedence — provider auto-detect → per-profile `context_length` → env var — via `resolve_context_window()` (`base.py`).
 
 ## Relationship to neighboring components
 
-`JaatoRuntime` holds the provider config and connection shared by every agent; `JaatoSession` calls `complete()` for each turn (`docs/architecture.md:247`). Because the protocol is uniform and history is provider-agnostic, a **subagent can run on a different provider than its parent** — the parent stays on Anthropic while a subagent's Profile selects `google_genai` (`docs/architecture.md:518-541`). The Model Provider is one of jaato's plugin kinds (alongside tool, enrichment, gc, session) and, like the others, is chosen declaratively by a Profile rather than wired in code.
+`JaatoRuntime` holds the provider config and connection shared by every agent; `JaatoSession` calls `complete()` for each turn (`docs/architecture.md`). Because the protocol is uniform and history is provider-agnostic, a **subagent can run on a different provider than its parent** — the parent stays on Anthropic while a subagent's Profile selects `google_genai` (`docs/architecture.md`). The Model Provider is one of jaato's plugin kinds (alongside tool, enrichment, gc, session) and, like the others, is chosen declaratively by a Profile rather than wired in code.
 
 ## Example
 
@@ -156,11 +156,11 @@ flowchart TD
 - **Caption:** "One protocol, many backends: the runtime speaks provider-agnostic types; each Model Provider plugin translates to its own SDK — so swapping models (even per-subagent) never touches the agent loop."
 
 ## Source references
-- `jaato-server/shared/plugins/model_provider/__init__.py:35` — `PLUGIN_KIND = "model_provider"`; `:67-203` discovery (`discover_providers`, `_discover_via_directory`, `load_provider`).
-- `jaato-server/shared/plugins/model_provider/base.py:152-353` — `ModelProviderPlugin` protocol: lifecycle, `connect`, and the stateless `complete()` contract (success vs raise-transient).
-- `jaato-server/shared/plugins/model_provider/base.py:68-149` — `ProviderConfig` and `resolve_context_window()` precedence.
-- `jaato-sdk/jaato_sdk/plugins/model_provider/types.py:106-519` — provider-agnostic types (`Role`, `Message`, `Part`, `FunctionCall`, `ToolResult`, `ToolSchema`, `ProviderResponse`, `TokenUsage`, `FinishReason`, `TurnResult`).
-- `jaato-sdk/jaato_sdk/plugins/model_provider/types.py:665-805` — `CancelledException` and `CancelToken` (streaming cancellation).
-- `jaato-server/shared/plugins/model_provider/anthropic/provider.py:201-203` — example provider `name` property; canonical implementation.
-- `jaato/docs/architecture.md:247-267, 518-541` — runtime/session ownership and cross-provider subagent support.
+- `jaato-server/shared/plugins/model_provider/__init__.py` — `PLUGIN_KIND = "model_provider"`; discovery (`discover_providers`, `_discover_via_directory`, `load_provider`).
+- `jaato-server/shared/plugins/model_provider/base.py` — `ModelProviderPlugin` protocol: lifecycle, `connect`, and the stateless `complete()` contract (success vs raise-transient).
+- `jaato-server/shared/plugins/model_provider/base.py` — `ProviderConfig` and `resolve_context_window()` precedence.
+- `jaato-sdk/jaato_sdk/plugins/model_provider/types.py` — provider-agnostic types (`Role`, `Message`, `Part`, `FunctionCall`, `ToolResult`, `ToolSchema`, `ProviderResponse`, `TokenUsage`, `FinishReason`, `TurnResult`).
+- `jaato-sdk/jaato_sdk/plugins/model_provider/types.py` — `CancelledException` and `CancelToken` (streaming cancellation).
+- `jaato-server/shared/plugins/model_provider/anthropic/provider.py` — example provider `name` property; canonical implementation.
+- `jaato/docs/architecture.md` — runtime/session ownership and cross-provider subagent support.
 - `jaato/CLAUDE.md` (Anthropic & OpenRouter profile-knob sections) — `plugin_configs.<provider>` layering: top-level / `api_params` / `routing` / `framework_overrides`.

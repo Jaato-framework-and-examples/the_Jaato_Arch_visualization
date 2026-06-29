@@ -27,16 +27,16 @@ Third, every credential read goes through a **leak-proof discipline**: a session
 
 ## Key concepts & structure
 
-### The secret-URI grammar and `SecretResolver` protocol (`config.py:31`, `:52`)
+### The secret-URI grammar and `SecretResolver` protocol (`config.py`)
 `_SECRET_URI_RE` matches `scheme://path[#key]` — a lowercase scheme, a path, an optional `#key` fragment. The `SecretResolver` Protocol declares a `schemes` property (a `FrozenSet[str]`, e.g. `{"vault"}` or a multi-scheme `{"awssm","gcpsm"}`) and `resolve(scheme, path, key) -> str`. Failures raise `SecretResolutionError` carrying `.uri` and `.reason`.
 
-### Entry-point discovery + scheme registry (`config.py:114`)
+### Entry-point discovery + scheme registry (`config.py`)
 `_discover_secret_resolvers()` reads the `jaato.premium` → `secret_resolvers` entry point group, loads each zero-arg factory, and populates a process-global `_resolvers` dict (scheme → instance), cached for the process. A second resolver claiming an already-registered scheme is **rejected with a warning** (first registration wins). The resolver *implementations* are not in the open-source tree — the entry-point group is **reserved but empty** here; backends ship with jaato-premium.
 
-### Dispatch with three bypasses (`config.py:171`)
+### Dispatch with three bypasses (`config.py`)
 `_resolve_secret_uri(value)` returns the value unchanged if it (1) still contains a pending `${VAR}` (env expansion runs downstream), (2) uses a standard network scheme — `_NETWORK_SCHEMES = {http, https, ws, wss, ftp, ftps}` — so a URL is never mistaken for a secret, or (3) names an unregistered scheme (logs a warning, returns literal). The network bypass exists because of a real pre-0.6.57 bug where `http://127.0.0.1:${PORT}` was wrongly treated as a secret URI and short-circuited the downstream env-var expansion. Resolution applies only when the **entire** string is a URI.
 
-### The `*_auth` plugin family + `TRAIT_AUTH_PROVIDER` (`base.py:20`)
+### The `*_auth` plugin family + `TRAIT_AUTH_PROVIDER` (`base.py`)
 Six plugins, each `PLUGIN_KIND="tool"`, `PLUGIN_TIER="daemon"`, `SESSION_INDEPENDENT=True` (loaded at startup so login works before any provider connection). Each carries `plugin_traits={TRAIT_AUTH_PROVIDER}` and a `provider_name`:
 
 | Plugin | `provider_name` | Auth kind |
@@ -48,7 +48,7 @@ Six plugins, each `PLUGIN_KIND="tool"`, `PLUGIN_TIER="daemon"`, `SESSION_INDEPEN
 | `openrouter_auth` | `openrouter` | API-key (validate + store) |
 | `zhipuai_auth` | `zhipuai` | API-key (validate + store) |
 
-The server matches an authed plugin to a session by **trait filter (`TRAIT_AUTH_PROVIDER`) → `provider_name` string equality** against the session's active provider (`core.py:5779`). (A separate `command_router._hint_available_auth_providers`, `command_router.py:1168`, only *lists* login commands when session creation fails — no equality check there.)
+The server matches an authed plugin to a session by **trait filter (`TRAIT_AUTH_PROVIDER`) → `provider_name` string equality** against the session's active provider (`core.py`). (A separate `command_router._hint_available_auth_providers`, `command_router.py`, only *lists* login commands when session creation fails — no equality check there.)
 
 ### The leak-proof discipline (`service_connector/auth.py`)
 Credential reads go through `get_session_env()` — a session-scoped `ContextVar` (checked before `os.environ`) so concurrent sessions never clobber each other's values. Each resolution produces an immutable `AuthAttempt`: it holds the `AuthSource` provenance (`method`, `kind` ∈ `env`/`uri`/`unset`, `env_var`, `uri`, `rotation_hint`) plus — only for secret-like methods — `token_len` and `token_prefix` (first 4 chars). **The secret value is never a field.** This is what lets a 401 carry an actionable diagnosis ("the token from `pass://X` is stale — rotate with `pass edit X`") instead of "Bad credentials." OAuth tokens are cached by service with a 60-second expiry buffer.
@@ -56,7 +56,7 @@ Credential reads go through `get_session_env()` — a session-scoped `ContextVar
 ## Lifecycle / flow
 
 **Config value → provider header.**
-1. The daemon reads the workspace `.env` and runs `expand_variables` (defined `config.py:421`, called from `core.py:1017`): Phase 1 expands `${VAR}` (context → session-env → `os.environ`); Phase 2 calls `_resolve_secret_uri`, which discovers resolvers and invokes the matching one (e.g. `vault.resolve("secret/anthropic", key="key")` → `sk-ant-…`). **This happens daemon-side** because only the unconfined daemon can exec `pass`/`vault`; the AppArmor-confined runner cannot.
+1. The daemon reads the workspace `.env` and runs `expand_variables` (defined `config.py`, called from `core.py`): Phase 1 expands `${VAR}` (context → session-env → `os.environ`); Phase 2 calls `_resolve_secret_uri`, which discovers resolvers and invokes the matching one (e.g. `vault.resolve("secret/anthropic", key="key")` → `sk-ant-…`). **This happens daemon-side** because only the unconfined daemon can exec `pass`/`vault`; the AppArmor-confined runner cannot.
 2. The fully-resolved value lands in `self._session_env` and ships to the runner in the session envelope, applied to `os.environ` unchanged — no resolver discovery, no `pass` exec runner-side.
 3. At request time a service call goes through `AuthManager.get_auth_headers()`; `_resolve_credential` reads the key (URI → `_resolve_secret_uri`, or bare name → `get_session_env`), puts it in the header, and appends an `AuthAttempt` with only len/prefix provenance.
 
@@ -80,7 +80,7 @@ openrouter-auth login       # API-key validate + store
 
 ## Relationship to neighboring components
 
-**Profiles** (`07-profiles`) carry the secret URIs in their `env` map. **Model providers** (`06-model-providers`) consume the resolved keys; each `*_auth` plugin's `verify_credentials()` defers to the matching provider's `env.py`/`oauth.py`. A key can also be supplied **per provider** as `plugin_configs.<provider>.api_key: pass://…` (not just via `.env`): it rides in `ProviderConfig(extra=…)` through `verify_auth` (`jaato_runtime.py:680`) and is promoted out of `extra` at connect time, resolving through the same secret-URI machinery. The **plugin system** (`05-plugins`) discovers auth plugins by `PLUGIN_KIND`/`PLUGIN_TIER`/`SESSION_INDEPENDENT` and the `TRAIT_AUTH_PROVIDER` trait. The **workspace/runner boundary** (`15-workspace`) is *why* resolution is daemon-side: the confined runner can't reach a secret store. Redaction (`18-redaction`) is the outbound mirror that keeps these resolved values out of traces.
+**Profiles** (`07-profiles`) carry the secret URIs in their `env` map. **Model providers** (`06-model-providers`) consume the resolved keys; each `*_auth` plugin's `verify_credentials()` defers to the matching provider's `env.py`/`oauth.py`. A key can also be supplied **per provider** as `plugin_configs.<provider>.api_key: pass://…` (not just via `.env`): it rides in `ProviderConfig(extra=…)` through `verify_auth` (`jaato_runtime.py`) and is promoted out of `extra` at connect time, resolving through the same secret-URI machinery. The **plugin system** (`05-plugins`) discovers auth plugins by `PLUGIN_KIND`/`PLUGIN_TIER`/`SESSION_INDEPENDENT` and the `TRAIT_AUTH_PROVIDER` trait. The **workspace/runner boundary** (`15-workspace`) is *why* resolution is daemon-side: the confined runner can't reach a secret store. Redaction (`18-redaction`) is the outbound mirror that keeps these resolved values out of traces.
 
 ## Example
 
@@ -130,14 +130,14 @@ flowchart TD
 - **Caption:** "Secrets: `scheme://path#key` references resolved daemon-side by pluggable backends, per-provider OAuth/API-key auth plugins, and an AuthAttempt that records provenance — never the secret itself."
 
 ## Source references
-- `jaato/jaato-server/shared/plugins/subagent/config.py:31` — `_SECRET_URI_RE` (`scheme://path#key`); `SecretResolver` protocol `:52`.
-- `jaato/jaato-server/shared/plugins/subagent/config.py:114` — `_discover_secret_resolvers()` + `_resolvers` registry + duplicate-scheme guard (`:147`).
-- `jaato/jaato-server/shared/plugins/subagent/config.py:171` — `_resolve_secret_uri()` + `_NETWORK_SCHEMES` bypass (`:49`) + pre-0.6.57 rationale (`:38`).
-- `jaato/jaato-server/shared/plugins/subagent/config.py:491` — two-phase `_expand_string()` (`${VAR}` then secret URI).
-- `jaato/jaato-server/server/core.py:985` — daemon-side secret resolution (confined runner can't exec `pass`/`vault`); calls `expand_variables` at `:1017` (defined in `…/plugins/subagent/config.py:421`).
-- `jaato/jaato-sdk/jaato_sdk/plugins/base.py:20` — `TRAIT_AUTH_PROVIDER = "auth_provider"`.
-- `jaato/jaato-server/shared/plugins/anthropic_auth/plugin.py:58` — `provider_name`, PKCE flow `:285`; `github_auth/plugin.py:281` — device-code `_cmd_login`.
-- `jaato/jaato-server/server/core.py:5779` — trait filter + `provider_name` string-equality match; `command_router.py:1168` — `_hint_available_auth_providers` (lists login commands on failure, no equality).
-- `jaato/jaato-server/shared/plugins/service_connector/auth.py:129` — `AuthAttempt`/`AuthSource` (safe provenance, no value); `_SECRET_LIKE_METHODS` `:61`.
-- `jaato/jaato-server/shared/plugins/service_connector/auth.py:198` — `_resolve_credential()` (URI vs `get_session_env`); OAuth lifecycle `:418`.
-- `jaato/jaato-server/shared/session_context.py:56` — `_session_env` ContextVar; `get_session_env()` `:109`.
+- `jaato/jaato-server/shared/plugins/subagent/config.py` — `_SECRET_URI_RE` (`scheme://path#key`); `SecretResolver` protocol.
+- `jaato/jaato-server/shared/plugins/subagent/config.py` — `_discover_secret_resolvers()` + `_resolvers` registry + duplicate-scheme guard.
+- `jaato/jaato-server/shared/plugins/subagent/config.py` — `_resolve_secret_uri()` + `_NETWORK_SCHEMES` bypass + pre-0.6.57 rationale.
+- `jaato/jaato-server/shared/plugins/subagent/config.py` — two-phase `_expand_string()` (`${VAR}` then secret URI).
+- `jaato/jaato-server/server/core.py` — daemon-side secret resolution (confined runner can't exec `pass`/`vault`); calls `expand_variables` (defined in `…/plugins/subagent/config.py`).
+- `jaato/jaato-sdk/jaato_sdk/plugins/base.py` — `TRAIT_AUTH_PROVIDER = "auth_provider"`.
+- `jaato/jaato-server/shared/plugins/anthropic_auth/plugin.py` — `provider_name`, PKCE flow; `github_auth/plugin.py` — device-code `_cmd_login`.
+- `jaato/jaato-server/server/core.py` — trait filter + `provider_name` string-equality match; `command_router.py` — `_hint_available_auth_providers` (lists login commands on failure, no equality).
+- `jaato/jaato-server/shared/plugins/service_connector/auth.py` — `AuthAttempt`/`AuthSource` (safe provenance, no value); `_SECRET_LIKE_METHODS`.
+- `jaato/jaato-server/shared/plugins/service_connector/auth.py` — `_resolve_credential()` (URI vs `get_session_env`); OAuth lifecycle.
+- `jaato/jaato-server/shared/session_context.py` — `_session_env` ContextVar; `get_session_env()`.
