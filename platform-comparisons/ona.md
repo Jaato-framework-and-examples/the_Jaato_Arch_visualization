@@ -62,8 +62,10 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/GetAgentExecution 
 #   status.conversationUrl, status.transcriptUrl, inputTokensUsed/outputTokensUsed
 ```
 
-**jaato** — reattach by id (on the same WS) and consume the event stream:
+**jaato** — reconnect and reattach by id. A fresh WS connection auto-provisions its *own* workspace, so re-attaching a detached run is a 3-step handshake — discover it, select its workspace, then attach:
 ```bash
+→ {"type":"command.execute","command":"session.list"}                                 # find the session + its workspace_path
+→ {"type":"command.execute","command":"workspace.select","args":["<workspace_path>"]}  # re-target the session's workspace
 → {"type":"command.execute","command":"session.attach","args":["<sid>"]}
 # ← {"type":"agent.output","text":"…"}        # FIRST replayed history, THEN live output (raw attach replays prior turns)
 # ← {"type":"turn.completed", ...}             # a plain turn ends here…
@@ -72,7 +74,7 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/GetAgentExecution 
 
 **Runnable:** [`examples/ws/ex2_attach_replay.mjs`](../examples/ws/ex2_attach_replay.mjs)
 
-**Side by side.** Ona is **poll-based** — you `GetAgentExecution` for a `phase` and links to the conversation/transcript (and token usage). jaato is **event-based** — you re-attach and consume `AGENT_OUTPUT`/lifecycle events live (no polling), with the run's transcript persisted server-side. (On a raw attach the daemon first **replays the session's prior history** as `agent.output` events, *then* streams live output — declare a `chat` presentation via `ClientConfigRequest` to skip the replay.) Different I/O models for the same "watch a detached run" need.
+**Side by side.** Ona is **poll-based** — you `GetAgentExecution` for a `phase` and links to the conversation/transcript (and token usage). jaato is **event-based** — you re-attach and consume `AGENT_OUTPUT`/lifecycle events live (no polling), with the run's transcript persisted server-side. (On a raw attach the daemon first **replays the session's prior history** as `agent.output` events, *then* streams live output — declare a `chat` presentation via `ClientConfigRequest` to skip the replay.) Attaching a session you haven't `workspace.select`'d first returns a bare **`Session not found`** — **intentionally opaque** (confirming the session by name would leak cross-workspace session existence), so `workspace.select` is the legitimate re-target, not a rough edge. Different I/O models for the same "watch a detached run" need.
 
 ## 3. Send follow-up input to a running agent
 
@@ -83,9 +85,9 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/SendToAgentExecuti
   -d '{ "agentExecutionId": "uuid", "userInput": { "text": { "content": "Also add tests." } } }'
 ```
 
-**jaato**
+**jaato** — after the §2 re-attach handshake (`session.list` → `workspace.select` → `session.attach`), just send:
 ```bash
-→ {"type":"command.execute","command":"session.attach","args":["<sid>"]}
+→ {"type":"command.execute","command":"session.attach","args":["<sid>"]}   # workspace already selected — see §2
 → {"type":"message.send","text":"Also add tests."}     # continue the same running session
 ```
 
