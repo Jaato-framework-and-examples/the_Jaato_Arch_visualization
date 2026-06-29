@@ -41,6 +41,8 @@ import { ask } from "@jaato/sdk";
 console.log(await ask("Who are you? One sentence.", { url: "wss://localhost:8080", profile: { model: "gpt-4o", provider: "openai", plugins: [] } }));
 ```
 
+**Runnable:** [`examples/ts-sdk/src/ex01_basic_ask.ts`](../examples/ts-sdk/src/ex01_basic_ask.ts)
+
 **Side by side.** Both are a few lines. Mastra constructs an agent object and runs it **in your process**; jaato opens an isolated session **on a daemon** and `ask`s. Comparable ceremony — the difference is *where the agent runs*, not how much code you write.
 
 ## 2. Streaming the reply
@@ -56,6 +58,8 @@ for await (const chunk of stream.textStream) process.stdout.write(chunk);
 await using s = await JaatoClient.session({ url, profile: { model: "gpt-4o", provider: "openai", plugins: [] } });
 for await (const chunk of s.stream("Tell me a short story.")) process.stdout.write(chunk);
 ```
+
+**Runnable:** [`examples/ts-sdk/src/ex02_streaming.ts`](../examples/ts-sdk/src/ex02_streaming.ts)
 
 **Side by side.** Near-identical async iteration. Mastra exposes `stream.textStream` (it also has `stream.fullStream` for tool/step events, being built on the Vercel AI SDK); jaato's `s.stream(...)` is an `AsyncIterable<string>` of model-output chunks, raising the same `AgentError`/`PermissionUnhandled` after it drains.
 
@@ -83,6 +87,8 @@ await s.ask("Hello");
 console.log(await s.ask("And your name?"));        // same session → it remembers
 ```
 
+**Runnable:** [`examples/ts-sdk/src/ex03_persona_memory.ts`](../examples/ts-sdk/src/ex03_persona_memory.ts)
+
 **Side by side.** Mastra makes memory an explicit, pluggable store (LibSQL/Postgres/…) addressed by `threadId`/`resourceId`, with working-memory and semantic-recall features. jaato keeps conversation state **in the daemon session** — a second `ask` on the same session just continues it — and a system prompt is a reusable **persona** (`agent: "pirate"`), not constructor config.
 
 ## 4. Structured / typed output
@@ -103,6 +109,8 @@ await using s = await JaatoClient.session({ url, profile: "person-extractor" });
 const person = await s.complete("Alice is 30.");   // object | null (server-validated payload)
 console.log(person?.name, person?.age);
 ```
+
+**Runnable:** [`examples/ts-sdk/src/ex04_typed_completion.ts`](../examples/ts-sdk/src/ex04_typed_completion.ts)
 
 **Side by side.** Mastra validates the model's output *after the fact, in your process* (`structuredOutput` → `res.object`). jaato makes typed output a **server-side completion gate**: the agent must call `signal_completion(payload)`, the daemon validates it against the schema (and runs completion processors), and `s.complete()` returns that validated payload (or `null`). A wrong-shape payload is bounced back to the model to retry — the agent can't "finish" malformed.
 
@@ -136,6 +144,8 @@ await using s = await JaatoClient.session({
 console.log(await s.ask("Weather in Paris?"));
 ```
 
+**Runnable:** [`examples/ts-sdk/src/ex05_client_tool.ts`](../examples/ts-sdk/src/ex05_client_tool.ts)
+
 **Side by side.** Both register a typed tool the agent can call. In Mastra the tool's `execute` runs **in your Node process**, inline with the agent. In jaato the schema is registered with the daemon and **the runner-tier agent loop invokes it**, calling back into your client for the handler — the loop, retries, and result-threading happen server-side. (jaato can also use **server-side** tool plugins — `cli`, `web_search`, … — via the profile's `plugins`, with no client code at all; Example 6.)
 
 ## 6. Multi-tool agent loop (ReAct)
@@ -156,6 +166,8 @@ await using s = await JaatoClient.session({ url, profile: {
 } });
 console.log(await s.ask("Plan a trip to Paris and save it to trip.md"));
 ```
+
+**Runnable:** [`examples/ts-sdk/src/ex06_multitool.ts`](../examples/ts-sdk/src/ex06_multitool.ts)
 
 **Side by side.** Mastra runs the tool-calling loop **inside `agent.generate`**, in your process, with `stopWhen` as the stop condition. In jaato the loop — model → tool calls (permission-checked, parallelizable) → results → model — runs **inside the confined runner**; you choose the tools and `ask`. The loop is your dependency's code in one case, infrastructure in the other.
 
@@ -184,6 +196,8 @@ await using s = await JaatoClient.session({
 });
 console.log(await s.ask("Delete temp.log"));
 ```
+
+**Runnable:** [`examples/ts-sdk/src/ex07_permissions.ts`](../examples/ts-sdk/src/ex07_permissions.ts)
 
 **Side by side.** In Mastra, HITL is a **workflow** concern: you wrap the gated action in a step that `suspend()`s and a host that `resume()`s with the human's input (snapshotted to storage). In jaato it's **first-class on any agent turn**: the daemon asks before a gated tool and your `onPermission(ev)` returns `"y"`/`"n"`/`"a"`/… Omit the callback and a gated tool makes `s.ask()` throw `PermissionUnhandled` (auto-denied so the daemon never wedges). For *headless* sessions the same escalation can route to an out-of-band approval gate — see the resilience doc.
 
@@ -224,6 +238,8 @@ await new Promise<void>((resolve) => {
 // the daemon auto-continues 'lead' as each subagent COMPLETES; resolves only when 'lead' signal_completion's
 console.log(out.join(""));
 ```
+
+**Runnable:** [`examples/ts-sdk/src/ex08_subagent.ts`](../examples/ts-sdk/src/ex08_subagent.ts)
 
 **Side by side.** Both are true **delegation** — one lead in control. But Mastra's supervisor runs **in your process**, `supervisor.generate(...)` blocking until it composes. jaato's is **async and daemon-driven**: the lead calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** (sharing the parent's runner — a per-subagent *isolated* runner + cgroup is designed but **not yet shipped**), and its result returns as a `[SUBAGENT … COMPLETED]` event the **daemon uses to auto-continue the lead** until it composes and `signal_completion`s. Spanning many turns, this is the one example that uses the **event API** — the facade's `ask`/`complete`/`stream` return on the first `TURN_COMPLETED` (the spawn turn), so you await the final `SESSION_TERMINATED` on `s.client`. (Personas live in `.jaato/agents/`; the lead must be **completion-gated**. Mastra's older `AgentNetwork` is deprecated in favour of supervisor agents.) **How the lead knows to delegate, and to whom:** three inputs combine — the **persona** gives it the *role* (a coordinator that delegates rather than working directly; ≈ Mastra's `instructions`), the **first prompt** carries the *task* (≈ Mastra's `generate(...)` argument), and the **`subagent` plugin** supplies the *means + targets*: the lead calls `list_subagent_profiles` to read each profile's name + description, then `spawn_subagent(profile="researcher", task=…)`. That `list_subagent_profiles` registry is jaato's analog of Mastra's `agents:{}` declaration (where the model sees each sub-agent's `description`) — except jaato *discovers* the profiles from `.jaato/profiles/` rather than declaring them inline. (The `agent=` persona axis is a *separate*, non-discovered selector.)
 
@@ -270,6 +286,8 @@ def execute(params, event, ctx):
         cascade_driver_id=read_cascade_driver_id(ctx.workspace_path))   # cid from the workspace cascade_state, not the event
 ```
 
+**Runnable:** [`examples/ts-sdk/src/ex09_cascade.ts`](../examples/ts-sdk/src/ex09_cascade.ts)
+
 **Side by side.** Mastra's `Workflow` is a **typed, in-process orchestration you drive** — `createStep`/`.then()`/`.branch()`/parallel, Zod-validated, with `suspend`/`resume` and snapshots. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** (running in the daemon, Python, whatever your client's language) reacts to that completion event and spawns the successor, threading the prior stage's typed payload into a freed warm slot. The client only triggers stage 1; the pipeline runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated, and you branch or fan out by adding **rules, not code**. *(A client loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse.)*
 
 ## 10. Production: persistence, recovery, observability
@@ -295,6 +313,8 @@ await using s = await JaatoClient.session({
 console.log(await s.ask("Long task…"));                      // survives a daemon bounce
 // sessions also persist server-side: detach and re-attach by id with the low-level client.
 ```
+
+**Runnable:** [`examples/ts-sdk/src/ex10_recovery.ts`](../examples/ts-sdk/src/ex10_recovery.ts)
 
 **Side by side.** In Mastra you wire durability (a storage adapter) and tracing (the observability config → OTel) into **your** app. jaato inherits them from the **daemon**: `recovery: {}` auto-reconnects and recovers an in-flight turn across a restart; sessions persist server-side and re-attach by id; OpenTelemetry tracing is a daemon flag, not client code. Plus what has no Mastra analog: each session runs in its **own AppArmor-confinable, workspace-scoped subprocess**, with optional per-session memory caps — so one agent can't take your app's process down with it.
 
