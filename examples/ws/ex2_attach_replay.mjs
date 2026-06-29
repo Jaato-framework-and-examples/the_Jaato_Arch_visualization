@@ -12,12 +12,13 @@
 // socket → the run keeps going"), so a second connection re-attaches by id and
 // the daemon replays the prior turns. Substitutions: see README.
 //
-// FINDING (triaged with the framework owner): on this build raw `session.attach`
-// does NOT stream a replay — the daemon deliberately skips re-emitting state on
-// this attach path, so "raw attach replays prior turns" (ona.md §2) is
-// aspirational for the raw-frame path, not a bug to wait on. This example sends
-// the correct doc frame and reports the observed behaviour; ex1 + ex4 are the
-// fully-working raw-frame core.
+// FINDING (triaged with the framework owner): `session.attach` DOES replay for a
+// WARM reattach (the session still in memory). This example does a COLD reattach
+// — closing the socket UNLOADS the session, then attach disk-restores it — and
+// cold reattach currently RACES: the runner re-spawns async, so the replay
+// history may not be populated when state is emitted → no replay frames. A real
+// gap on the unloaded→restored path (flagged upstream), not by design; warm
+// reattach replays. ex1 + ex4 are the fully-working raw-frame core.
 
 import { SPEC } from "./_config.mjs";
 import { connect, collectReply } from "./_ws.mjs";

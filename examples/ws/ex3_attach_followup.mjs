@@ -10,11 +10,13 @@
 // The re-attached session keeps its memory, so the follow-up can reference the
 // earlier turn. Substitutions: see README.
 //
-// FINDING (flagged upstream): on the installed build, a `message.send` to a
-// RE-ATTACHED (previously-unloaded) session is not processed — no turn starts
-// (the session was unloaded on detach; attach reloads it but the subsequent send
-// goes nowhere). This example sends the correct doc frames and reports the
-// observed behaviour; ex1 + ex4 are the fully-working raw-frame core.
+// FINDING (triaged with the framework owner): this is a COLD reattach — the
+// session was UNLOADED on the socket close, then disk-restored on attach. Cold
+// reattach currently RACES: the async runner re-spawn vs the restore/send-ready
+// steps, so the restored session may not be turn-ready when the follow-up send
+// lands → no turn starts. Same root as ex2's missing replay (flagged upstream);
+// a WARM reattach (session still loaded) continues normally. ex1 + ex4 are the
+// fully-working raw-frame core.
 
 import { SPEC } from "./_config.mjs";
 import { connect, collectReply } from "./_ws.mjs";
