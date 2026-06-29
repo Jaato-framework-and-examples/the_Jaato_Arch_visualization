@@ -57,3 +57,9 @@ verbatim from the doc; each file's header shows the doc snippet alongside.
   the session keeps its memory (ex3). The cold restore is asynchronous: a send
   issued while it settles can return a recoverable `"Session not found"`, so the
   reconnect helper resends until output arrives.
+- **The opaque `"Session not found"` is deliberate, not a rough edge.** Workspace
+  isolation is a security boundary — a connection only sees its selected
+  workspace, and the daemon won't reveal that a session exists in another one
+  (that would leak cross-workspace session existence). So `workspace.select` is
+  how a client legitimately re-targets a workspace it owns; it isn't a workaround
+  for a vague error.
