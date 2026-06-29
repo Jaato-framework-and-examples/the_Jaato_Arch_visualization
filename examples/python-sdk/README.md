@@ -77,57 +77,44 @@ verbatim. Each file's header repeats the doc snippet for side-by-side comparison
    `[set]` is deliberate); the doc snippets omit it. Tool-less examples use
    `"plugins": []`.
 
-## Findings (surfaced by running the docs e2e — flagged, not papered over)
+## Deviations from the docs
 
 - **Inline spec requires `plugins`.** The docs' concise `profile={"model","provider"}`
   is rejected (`InvalidSessionSpec`); examples add `"plugins": []`.
-- **ex10 — facade × `IPCRecoveryClient` hang.** The doc's bare `await s.ask()` on a
-  recovery client hangs (the recovery client ran no background event pump). Fixed
-  upstream in jaato **PR #412** (recovery background pump + `workspace_path` `Path`
-  coerce). `ex10` keeps a commented `events()` pump until the fix is in the
-  installed build, then runs the doc-verbatim three lines.
-- **ex08 — subagent example can't terminate as written.** The prose says the lead
+- **ex08 — the subagent lead must be completion-gated.** The prose says the lead
   must be completion-gated, but the doc's inline profile omits the
   `completion_payload_schema` that exposes `signal_completion`. `ex08` adds the
   gate (a `blurb` schema).
-- **ex09 — `read_cascade_driver_id` is wrong.** The doc's helper (and its "from
-  workspace cascade_state" comment) is pseudocode; the real cid is read from the
-  managed session record via `ctx.session_manager.get_session(ctx.session_id)`.
-  `spawn_summarize.py` uses the real mechanism.
+- **ex09 — `read_cascade_driver_id` is pseudocode.** The doc's helper (and its
+  "from workspace cascade_state" comment) is illustrative; the real cid is read
+  from the managed session record via
+  `ctx.session_manager.get_session(ctx.session_id)`. `spawn_summarize.py` uses the
+  real mechanism.
 - **ex09 — `reactors.json` requires `"version": 1`.** The doc's reactor snippet
   omits it; without it the rule file fails to load (`Unsupported reactors.json
   version: None`) and the cascade never fires.
-- **ex09 — typed-payload handoff needs a schema + server ≥ #414.** The cascade is
+- **ex09 — typed-payload handoff needs a schema on the producer.** The cascade is
   the full 3-stage chain extract → summarise → verify (the comparison §9 shows the
-  2-stage illustration). `event.get(<field>)` is the correct typed-handoff pattern
-  and needs both: (1) a `completion_payload_schema` with that top-level field on
-  the **producer** profile (so `signal_completion(field=…)` attaches a validated
-  typed payload) — `extract.json`→`facts`, `summarize.json`→`summary`,
+  2-stage illustration). `event.get(<field>)` is the typed-handoff pattern and
+  needs both: (1) a `completion_payload_schema` with that top-level field on the
+  **producer** profile (so `signal_completion(field=…)` attaches a validated typed
+  payload) — `extract.json`→`facts`, `summarize.json`→`summary`,
   `verify.json`→`verdict`; and (2) the server hoists that typed payload onto the
-  bus event the reactor receives (jaato PR #414 — before it, the payload sat one
-  level too deep → `None`, a real core bug this example surfaced; the fix is on
-  main). Validated end-to-end: summarise gets the real facts, verify the real
-  summary (verdict "pass").
-- **ex03 — client-driven multi-turn deadlocked (now fixed upstream).** Any two
-  sequential `s.ask` on one session hung on turn 2: the daemon emitted
-  `TURN_COMPLETED` before clearing `_model_running`, so turn 2's send hit the
-  "still running" gate, was forwarded as an inject onto an idle session with no
-  drainer, and queued forever. Root-caused with a diagnostic trace (a core
-  runner-tier race, not ws/agent/reactor) and **fixed in jaato PR #413**
-  (drain-on-finally). ex03 is gated green again.
+  bus event the reactor receives. End-to-end: summarise gets the real facts,
+  verify the real summary (verdict "pass").
 - **ex06 — the autonomous loop needs daemon-side config + a tool-requiring task.**
   jaato gates file/cli tools by default (set `permission.policy.defaultPolicy:
-  "allow"`), and `file_edit` fails to initialise (PR-146 init-ordering — backup
-  dir can't resolve before init), so it's dropped and file work goes via `cli`.
-  Also, the doc's vague "plan a trip and save it" is a flaky loop trigger (a model
-  may ask for clarification — which errors headless — or just print the answer
-  instead of saving it), so the example uses a task that *requires* tool output
-  (real date + dir listing → `report.txt`). See the file header.
+  "allow"`), and `file_edit` is dropped (its backup dir can't resolve before
+  init), so file work goes via `cli`. The doc's vague "plan a trip and save it" is
+  a flaky loop trigger (a model may ask for clarification — which errors headless —
+  or just print the answer instead of saving it), so the example uses a task that
+  *requires* tool output (real date + dir listing → `report.txt`). See the file
+  header.
 
 ## The dedicated daemon
 
 `daemon.sh` runs an isolated daemon (`/tmp/jaato-examples.sock`, ws `:8099`, own
 pid/log). Provider = `openrouter` (`google/gemini-2.5-flash`), creds via the profiles'
 `pass:` knob. Note: a dedicated daemon still inherits **home-global** reactors
-from `~/.jaato/reactors/` — a completion reactor there can deadlock client-driven
-multi-turn (see the repo findings); keep that dir clean for these examples.
+from `~/.jaato/reactors/` — a stray completion reactor there can interfere with
+these examples' cascades, so keep that dir clean.

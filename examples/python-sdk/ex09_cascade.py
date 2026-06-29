@@ -31,9 +31,8 @@ payload threads via `event.get(<field>)` (see spawn_summarize.py / spawn_verify.
 
 The typed payload threads via `event.get(<field>)` because each producer profile
 declares a `completion_payload_schema` and the server hoists the validated
-payload onto the bus event (jaato PR #414 — this example surfaced that bug; the
-fix is on main). End-to-end: summarise gets the real facts, verify the real
-summary (verdict "pass").
+payload onto the bus event. End-to-end: summarise gets the real facts, verify the
+real summary (verdict "pass").
 
 Standing deviations (see README): `**CONN`. (Model/provider + plugins live in the
 profile JSONs.)

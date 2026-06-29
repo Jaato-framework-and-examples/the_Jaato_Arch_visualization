@@ -44,20 +44,17 @@ verbatim from the doc; each file's header shows the doc snippet alongside.
   pre-installed `backend` profile. (Provider = `openrouter`,
   model = `google/gemini-2.5-flash`.)
 
-## Findings
+## Notes
 
-- **ex1 + ex4 are e2e-green** — the basic round-trip and the lifecycle frames
-  (`session.list` → a session list, `session.stop`, `session.end`) work.
-- **`session.attach` works for a WARM reattach; ex2/ex3 do a COLD reattach, which
-  currently races** (triaged with the framework owner). `session.attach` *does*
-  replay history and accept follow-up sends when the session is still loaded
-  (warm). ex2/ex3 close the socket first — which **unloads** the session — then
-  attach by id (disk-restored = **cold**). On the cold path the runner re-spawns
+- **ex1 + ex4** exercise the basic round-trip and the lifecycle frames
+  (`session.list` → a session list, `session.stop`, `session.end`).
+- **ex2/ex3 do a COLD reattach, which currently races.** `session.attach` replays
+  history and accepts follow-up sends when the session is still loaded (warm).
+  ex2/ex3 close the socket first — which **unloads** the session — then attach by
+  id (disk-restored = **cold**). On the cold path the runner re-spawns
   asynchronously, so two things race the restore: the replay history may not be
   populated when state is emitted → **no replay frames** (ex2), and the restored
   session may not be turn-ready when the follow-up lands → **the send starts no
-  turn** (ex3). Both share one root — the cold-reattach readiness race — flagged
-  upstream as a real gap on the unloaded→restored path (non-blocking). The session
-  *does* persist (it appears in `session.list`). ex2/ex3 send the correct doc
-  frames and report the observed behaviour (bounded so they never hang); the smoke
-  runs them as informational.
+  turn** (ex3). The session *does* persist (it appears in `session.list`). ex2/ex3
+  send the correct doc frames and report the observed behaviour (bounded so they
+  never hang); read the output accordingly.

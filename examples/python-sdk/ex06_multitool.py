@@ -13,24 +13,18 @@ Doc snippet (verbatim shape):
             "plugins": ["cli", "web_search", "file_edit", "todo"]}) as s:
         print(await s.ask("Plan a trip to Paris and save it to trip.md"))
 
-FINDINGS (the doc's autonomous loop needs daemon-side config the docs omit — they
-assume the ungated openai path with all tool backends present):
-  1. jaato gates file/cli tools by default (permission defaultPolicy "deny"), so a
-     loop with no on_permission raises PermissionUnhandled the moment the agent
-     calls a gated tool. We set a permissive policy so it runs unattended (ex07
-     shows the interactive on_permission path).
-  2. file_edit won't initialise on this build: it needs its backup dir resolved
-     before init, but config_root / plugin_configs.file_edit.backup_dir are
-     applied too late (framework PR-146 init-ordering). So it's the one plugin
-     dropped from the live set; the agent does file work via `cli` instead.
-     (web_search is kept — it uses the `ddgs`/DuckDuckGo library, no API key, and
-     works with network access.) Live plugin set: cli + web_search + todo; the
-     comparison-doc snippet keeps the full 4-plugin list as the illustration.
-  3. The doc's "plan a trip and save it" is a flaky way to *exercise* the loop —
-     a model may ask for clarification (errors headless) or just print the plan
-     instead of saving it. We use a self-contained task that REQUIRES tool output
-     (the real date + dir listing, which the model can't fabricate) so the cli
-     loop runs deterministically and writes report.txt.
+This example sets a permissive permission policy and a reduced plugin set:
+  - permission defaultPolicy "allow": jaato gates file/cli tools by default, so a
+    loop with no on_permission raises PermissionUnhandled the moment the agent
+    calls a gated tool (ex07 shows the interactive on_permission path).
+  - file_edit is omitted: it needs its backup dir resolved before init, which
+    can't happen here, so the agent does file work via `cli` instead. web_search
+    stays (it uses the `ddgs`/DuckDuckGo library, no API key). Live plugin set:
+    cli + web_search + todo; the comparison-doc snippet keeps the full 4-plugin
+    list as the illustration.
+  - the task requires real tool output (the current date + a dir listing, which
+    the model can't fabricate) so the cli loop runs deterministically and writes
+    report.txt, instead of the doc's vague "plan a trip and save it".
 
 Standing requirement: explicit `plugins`. Standing deviations (see README):
 `**CONN`, `**AUTH` (pass: cred knob), the model/provider literal, the permissive
@@ -45,15 +39,13 @@ from _config import CONN, WORKSPACE, AUTH
 async def main():
     async with IPCClient.session(**CONN, workspace_path=WORKSPACE, profile={
             "model": "google/gemini-2.5-flash", "provider": "openrouter",
-            "plugins": ["cli", "web_search", "todo"],   # only file_edit dropped — see FINDING 2
+            "plugins": ["cli", "web_search", "todo"],   # file_edit omitted: backup dir can't resolve before init
             "plugin_configs": {**AUTH["plugin_configs"],
                                "permission": {"policy": {"defaultPolicy": "allow"}}}}) as s:
-        # FINDING: the vague doc prompt ("plan a trip and save it") is a flaky
-        # way to exercise the loop — a model may call the framework
-        # `request_clarification` tool (which errors headless, no one to answer),
-        # or just print the plan instead of calling the shell to save it. We use
-        # a self-contained task that REQUIRES tool output (the model can't
-        # fabricate the real date/file list), so the cli loop runs deterministically.
+        # the task requires real tool output (the model can't fabricate the real
+        # date/file list) so the cli loop runs deterministically, rather than the
+        # doc's vague "plan a trip and save it" which a model may answer
+        # conversationally without calling the shell.
         print(await s.ask("Using the shell, get the current date with `date` and the "
                           "directory listing with `ls`, then write both into a file "
                           "called report.txt. Do not ask questions; just do it."))

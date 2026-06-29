@@ -16,19 +16,16 @@
 //   });
 //   console.log(out.join(""));
 //
-// Same finding as examples/python-sdk/ex08: the prose says the lead must be
+// Same deviation as examples/python-sdk/ex08: the prose says the lead must be
 // completion-gated, but the doc's inline profile omits the
 // completion_payload_schema that exposes signal_completion. This adds the gate (a
 // `blurb` schema). Subagent targets (researcher, writer) + the lead persona are
 // declarative, so this passes workspacePath + configRoot.
 //
-// Two robustness/honesty notes: (1) `max_turns` bounds the session so the
-// event-API wait below ALWAYS resolves — a completion-gated lead that never calls
-// signal_completion would otherwise hang forever. (2) The delegation is fully
-// wired, but whether the lead actually calls spawn_subagent is MODEL-DEPENDENT:
-// google/gemini-2.5-flash tends to decline ("I cannot spawn subagents"), so it
-// often terminates without delegating. A stronger agentic model delegates
-// reliably; the example demonstrates the wiring either way.
+// `max_turns` bounds the session so the event-API wait below ALWAYS resolves — a
+// completion-gated lead that never calls signal_completion would otherwise hang
+// forever. The delegation is fully wired, but whether the lead actually calls
+// spawn_subagent is model-dependent; the example demonstrates the wiring either way.
 //
 // Standing substitutions (see README): `...CONN`, `...AUTH`, the model literal,
 // the `plugins` key, + the completion gate.

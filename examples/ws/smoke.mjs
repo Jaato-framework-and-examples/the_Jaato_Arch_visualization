@@ -2,7 +2,7 @@
 //
 // ex1 (basic round-trip) + ex4 (lifecycle: list/stop/end) are the working core
 // and are GATED. ex2/ex3 (session.attach) send the correct doc frames but the
-// raw-attach replay/continue behaviour is a FINDING on this build (see their
+// raw-attach replay/continue is a known cold-reattach race (see their
 // headers + README), so they run as informational (bounded, never hang).
 //
 //   (examples/python-sdk/daemon.sh start  — shared daemon, serves WS :8099)
@@ -39,7 +39,7 @@ for (const c of cases) {
     if (ok) pass++;
     console.log(`${ok ? "✓" : "✗"} ${c.script.padEnd(26)} ${ok ? "PASS" : "FAIL"} (rc=${r.code})`);
   } else {
-    console.log(`~ ${c.script.padEnd(26)} ${ok ? "ran — frames sent (attach behaviour is a FINDING)" : "ran"} (rc=${r.code})`);
+    console.log(`~ ${c.script.padEnd(26)} ${ok ? "ran — frames sent (cold-reattach race; see README)" : "ran"} (rc=${r.code})`);
   }
 }
 console.log(`\n${pass}/${gatedTotal} gated examples passed (ex2/ex3 informational — see findings)`);

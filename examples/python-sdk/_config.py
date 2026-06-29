@@ -50,11 +50,10 @@ AUTH = {"plugin_configs": {"openrouter": {"api_key": "pass://jaato/openrouter/ap
 # NB workspace_path is deliberately NOT here. The docs never pass it, and only
 # the *declarative* examples (ex03/04/08/09) need it — to make the daemon
 # resolve ./.jaato/ assets — so they pass `workspace_path=WORKSPACE` explicitly.
-# Keeping it out of CONN also avoids a real SDK type-inconsistency: IPCClient
-# treats workspace_path as a str (cwd), but IPCRecoveryClient feeds it to
+# Keeping it out of CONN also avoids an SDK type-inconsistency: IPCClient treats
+# workspace_path as a str (cwd), but IPCRecoveryClient feeds it to
 # _find_config_files which does `workspace_path / ".jaato"` (config.py:166) and
-# crashes on a str. (Flagged to the SDK owners; the programmatic recovery
-# example ex10 simply doesn't pass it.)
+# crashes on a str — so the recovery example ex10 doesn't pass it.
 CONN = dict(
     socket_path=SOCKET,
     env_file=os.path.join(PROJECT_DIR, ".env"),

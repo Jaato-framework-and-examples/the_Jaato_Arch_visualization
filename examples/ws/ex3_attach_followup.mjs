@@ -10,13 +10,12 @@
 // The re-attached session keeps its memory, so the follow-up can reference the
 // earlier turn. Substitutions: see README.
 //
-// FINDING (triaged with the framework owner): this is a COLD reattach — the
-// session was UNLOADED on the socket close, then disk-restored on attach. Cold
-// reattach currently RACES: the async runner re-spawn vs the restore/send-ready
-// steps, so the restored session may not be turn-ready when the follow-up send
-// lands → no turn starts. Same root as ex2's missing replay (flagged upstream);
-// a WARM reattach (session still loaded) continues normally. ex1 + ex4 are the
-// fully-working raw-frame core.
+// This is a COLD reattach: the session is unloaded on the socket close, then
+// disk-restored on attach. Cold reattach currently races — the async runner
+// re-spawn vs the restore/send-ready steps, so the restored session may not be
+// turn-ready when the follow-up send lands → no turn starts. (A warm reattach,
+// session still loaded, continues normally.) The bounded wait below may therefore
+// return empty; read the output accordingly.
 
 import { SPEC } from "./_config.mjs";
 import { connect, collectReply } from "./_ws.mjs";
@@ -37,6 +36,6 @@ b.send({ type: "command.execute", command: "session.attach", args: [sid] });
 await new Promise((r) => setTimeout(r, 2000)); // brief settle (attach emits no frame to wait on)
 b.send({ type: "message.send", text: "What is my favourite colour?" });
 const reply = (await collectReply(b, 25000)).trim();
-console.log("follow-up reply:", reply || "(no reply — a re-attached session did not process the follow-up on this build; see FINDING)");
+console.log("follow-up reply:", reply || "(no reply — cold reattach is currently racing; see README)");
 b.close();
 process.exit(0);

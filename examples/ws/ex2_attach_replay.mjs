@@ -12,13 +12,12 @@
 // socket → the run keeps going"), so a second connection re-attaches by id and
 // the daemon replays the prior turns. Substitutions: see README.
 //
-// FINDING (triaged with the framework owner): `session.attach` DOES replay for a
-// WARM reattach (the session still in memory). This example does a COLD reattach
-// — closing the socket UNLOADS the session, then attach disk-restores it — and
-// cold reattach currently RACES: the runner re-spawns async, so the replay
-// history may not be populated when state is emitted → no replay frames. A real
-// gap on the unloaded→restored path (flagged upstream), not by design; warm
-// reattach replays. ex1 + ex4 are the fully-working raw-frame core.
+// This example does a COLD reattach: closing the socket unloads the session, then
+// attach disk-restores it. `session.attach` replays history for a WARM reattach
+// (session still in memory), but cold reattach currently races — the runner
+// re-spawns async, so the replay history may not be populated when state is
+// emitted → no replay frames. The bounded wait below may therefore return empty;
+// read the output accordingly.
 
 import { SPEC } from "./_config.mjs";
 import { connect, collectReply } from "./_ws.mjs";
@@ -37,6 +36,6 @@ console.log("first turn:", first, "| detached from", sid);
 const b = await connect();
 b.send({ type: "command.execute", command: "session.attach", args: [sid] });
 const replay = (await collectReply(b, 8000)).trim();
-console.log("replayed history:", replay || "(none — raw session.attach did not replay on this build; see FINDING)");
+console.log("replayed history:", replay || "(none — cold reattach is currently racing; see README)");
 b.close();
 process.exit(0);
