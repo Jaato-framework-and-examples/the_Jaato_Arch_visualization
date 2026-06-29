@@ -47,6 +47,8 @@ console.log(await s.complete("Refactor the auth module and open a PR."));
 // so you can reattach by it later (§2).
 ```
 
+**Runnable:** [`examples/ws/ex1_basic_session.mjs`](../examples/ws/ex1_basic_session.mjs)
+
 **Side by side.** At the **wire level both are raw protocols** — Ona's REST `POST`, jaato's WS frames; jaato additionally layers an SDK on top (above), which Ona has no equivalent of. Both hand back an **id for a server-side run** (`agentExecutionId` / `sid`) and detach. Ona starts the agent in a **cloud devcontainer** it provisions (with a Codex/OpenAI model + a `mode` — execution / planning / "RALPH"); jaato starts a **session** in an isolated runner on the daemon **you host**, with the model/provider/plugins from a profile. Ona binds the run to a **git project / PR / context URL**; jaato binds it to a **workspace**.
 
 ## 2. Check status / collect output
@@ -68,6 +70,8 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/GetAgentExecution 
 # ← {"type":"session.terminated", ...}         # …or here if the agent is completion-gated
 ```
 
+**Runnable:** [`examples/ws/ex2_attach_replay.mjs`](../examples/ws/ex2_attach_replay.mjs)
+
 **Side by side.** Ona is **poll-based** — you `GetAgentExecution` for a `phase` and links to the conversation/transcript (and token usage). jaato is **event-based** — you re-attach and consume `AGENT_OUTPUT`/lifecycle events live (no polling), with the run's transcript persisted server-side. (On a raw attach the daemon first **replays the session's prior history** as `agent.output` events, *then* streams live output — declare a `chat` presentation via `ClientConfigRequest` to skip the replay.) Different I/O models for the same "watch a detached run" need.
 
 ## 3. Send follow-up input to a running agent
@@ -85,6 +89,8 @@ curl -X POST https://app.gitpod.io/api/gitpod.v1.AgentService/SendToAgentExecuti
 → {"type":"message.send","text":"Also add tests."}     # continue the same running session
 ```
 
+**Runnable:** [`examples/ws/ex3_attach_followup.mjs`](../examples/ws/ex3_attach_followup.mjs)
+
 **Side by side.** Same capability — steer a long-running agent mid-flight. Ona's `WAITING_FOR_INPUT` phase + `SendToAgentExecution` mirrors jaato re-attaching and sending a `message.send` frame. (jaato can also push a non-blocking nudge via `inject_prompt`, and a *reactor* can do this server-side with no client — see the resilience doc.)
 
 ## 4. Stop / list runs
@@ -101,6 +107,8 @@ curl -X POST .../ListAgentExecutions   -d '{ "projectIds": ["proj_123"] }'    # 
 → {"type":"command.execute","command":"session.end","args":[]}   # end current; or session.delete ["<sid>"] by id
 → {"type":"command.execute","command":"session.list","args":[]}  # ← replies with a SessionList event
 ```
+
+**Runnable:** [`examples/ws/ex4_lifecycle.mjs`](../examples/ws/ex4_lifecycle.mjs)
 
 **Side by side.** Symmetric lifecycle controls — stop a run, enumerate runs. Ona scopes its list by **project/environment**; jaato by the **daemon's** session registry.
 
@@ -129,6 +137,8 @@ def execute(params, event, ctx):
     ctx.create_session(agent="reviewer", profile="reviewer",        # persona (soul) + profile (substrate)
                        initial_prompt=f"Review PR {event.get('pr')} for security issues.")
 ```
+
+**Runnable** *(reactor asset — the same pattern as the cascade, not a WS frame)*: [`examples/python-sdk/.jaato/reactors/cascade.json`](../examples/python-sdk/.jaato/reactors/cascade.json) + [`scripts/spawn_summarize.py`](../examples/python-sdk/.jaato/scripts/spawn_summarize.py)
 
 **Side by side.** Both turn **external events into background agent runs**. Ona's `automations.yaml` is declarative and git/CI-native (it *is* a Gitpod-heritage CI surface). jaato's inbound edge is the **`webhook` plugin** (HMAC-verified GitHub/Slack routes, IP allowlists, mTLS), loaded in a long-running host session; it publishes an `external_event` on the daemon's bus that a **reactor** turns into a session — the same reactor shape as a cascade, so one event can spawn a session or chain a whole pipeline. (jaato has **no built-in scheduler**: for *external HTTP* use the webhook plugin as shown; for *cron/CI* either drive a client — the TS client over WS, or a local `IPCClient` → `createSession`/`sendMessage` — or have the scheduled job POST the webhook listener.)
 
