@@ -7,9 +7,9 @@
 
 In the jaato agent framework, an agent session needs a lot of decisions made before it can run: which LLM and provider to use, which tools (plugins) to expose, how aggressively to garbage-collect context when it fills up, what environment variables to inject, and whether the agent must produce a structured result. A **profile** packages all of those decisions into one declarative file so they are version-controlled, reusable, and selectable by name instead of being hardcoded per launch.
 
-Concretely, a profile is a YAML file in `.jaato/profiles/` (YAML is the preferred authoring syntax; JSON is also accepted and parsed identically). At load time it is parsed into a `SubagentProfile` dataclass (`config.py:872`). The *same* dataclass is used both for the main session created from the CLI/SDK (`session.new --profile <name>`) and for subagents the parent delegates to (`spawn_subagent`) — "agent profile" and "subagent profile" are the same schema (`jaato/CLAUDE.md` "Agent Profiles": "Profile schema (same as `SubagentProfile`)").
+Concretely, a profile is a YAML file in `.jaato/profiles/` (YAML is the preferred authoring syntax; JSON is also accepted and parsed identically). At load time it is parsed into a `SubagentProfile` dataclass (`config.py`). The *same* dataclass is used both for the main session created from the CLI/SDK (`session.new --profile <name>`) and for subagents the parent delegates to (`spawn_subagent`) — "agent profile" and "subagent profile" are the same schema (`jaato/CLAUDE.md` "Agent Profiles": "Profile schema (same as `SubagentProfile`)").
 
-A profile carries *runtime configuration only*. The agent's *instructions* — its role/identity (the **persona**) — are authored separately as Markdown under `.jaato/agents/*.md`, layered on top of the project-wide base instructions in the `.jaato/instructions/` folder; the profile itself holds no prompt text (`config.py:889`, `jaato_subagent_profiles_reference.md:52-54`). See [Personas](08-personas.md) for the persona ↔ base-instruction-folder split.
+A profile carries *runtime configuration only*. The agent's *instructions* — its role/identity (the **persona**) — are authored separately as Markdown under `.jaato/agents/*.md`, layered on top of the project-wide base instructions in the `.jaato/instructions/` folder; the profile itself holds no prompt text (`config.py`, `jaato_subagent_profiles_reference.md`). See [Personas](08-personas.md) for the persona ↔ base-instruction-folder split.
 
 ## Where it sits in the stack
 
@@ -28,23 +28,23 @@ Below the profile there is nothing else to configure — it is the bottom, hand-
 
 ## Key concepts & structure
 
-### `SubagentProfile` — the canonical schema (`config.py:872`)
-The required fields are `name` and `description`. `plugins` is **required** in a profile *file* (absent is rejected; use `plugins: []` for the minimal framework set of permission/reliability/lifecycle only) — see the explicit error at `config.py:1866-1877`. Other notable fields: `model`, `provider`, `max_turns` (default 10), `gc`, `env`, `plugin_configs`, `inherits`, `completion_payload_schema`, `spawn_payload_schema`, `completion_processors`, `runtime_limits`, `model_tiers`, `apparmor`, `apparmor_fragments`, `quirks`, `suppress_base_instructions` (drop the framework base-instruction layer for this agent — see [Personas](08-personas.md)), and the derived `preloaded_plugins` / `tool_scopes`.
+### `SubagentProfile` — the canonical schema (`config.py`)
+The required fields are `name` and `description`. `plugins` is **required** in a profile *file* (absent is rejected; use `plugins: []` for the minimal framework set of permission/reliability/lifecycle only) — see the explicit error at `config.py`. Other notable fields: `model`, `provider`, `max_turns` (default 10), `gc`, `env`, `plugin_configs`, `inherits`, `completion_payload_schema`, `spawn_payload_schema`, `completion_processors`, `runtime_limits`, `model_tiers`, `apparmor`, `apparmor_fragments`, `quirks`, `suppress_base_instructions` (drop the framework base-instruction layer for this agent — see [Personas](08-personas.md)), and the derived `preloaded_plugins` / `tool_scopes`.
 
-### `plugins` list syntax + modifiers (`config.py:290-418`)
+### `plugins` list syntax + modifiers (`config.py`)
 Each entry is a plugin name that may carry a parenthesised modifier with two orthogonal knobs, parsed by `parse_plugin_entry`:
 - **mode** (`preload` | `discover`, default `discover`): `todo(preload)` forces *all* of that plugin's tools (including discoverable ones) into the initial wire context; `discover` leaves discoverable tools deferred until the model introspects.
 - **tools** allow-list: `file_edit([readFile,writeFile])` restricts the plugin to exactly those tools; every other tool the plugin ships is dropped from the wire body and grammar surface for this session.
 Forms freely mix: `file_edit(mode:preload, tools:[readFile,writeFile])`. Parsing splits these into `plugins` (clean names), `preloaded_plugins` (a set), and `tool_scopes` (plugin → allow-list).
 
-### `plugin_configs` — per-plugin layered config (`config.py:947`, `profile-plugin-configs.md`)
+### `plugin_configs` — per-plugin layered config (`config.py`, `profile-plugin-configs.md`)
 A dict of plugin-name → config dict, passed to each plugin's `initialize(config)` at session creation. Provider plugins are configured the same way. Anthropic config is namespaced into layers: top-level auth (`api_key`, `oauth_token`), `api_params` (Messages-API body fields like `temperature`, `max_tokens`, `enable_thinking`, `thinking_budget`), and a reserved `framework_overrides` (`jaato/CLAUDE.md` "Anthropic Claude" profile knobs). OpenRouter adds a `routing` layer (provider-routing keys like `sort`, `order`, `only`, `data_collection`) on top of `api_params`. Values support `${VAR}` expansion and `vault://`-style secret URIs.
 
-### `gc` — context garbage collection (`GCProfileConfig`, `config.py:736`)
+### `gc` — context garbage collection (`GCProfileConfig`, `config.py`)
 Controls how the context window is kept from overflowing. Keys: `type` (`truncate` | `summarize` | `hybrid` | `budget`), `threshold_percent` (default 80) to trigger, `target_percent` (default 60) after GC, `pressure_percent` (`0`/`null` = continuous mode), `preserve_recent_turns`, `notify_on_gc`, `summarize_middle_turns`, `max_turns`.
 
-### `quirks` — per-provider/model behavior knobs (`config.py:1053`)
-A top-level dict that opts the **active provider** into known wire-format / model-behavior **workarounds**. Because a profile binds to exactly one `provider` + `model`, quirks are where you encode "*this* model on *this* provider misbehaves in way X — apply the framework's fix." The dict is threaded to the provider as `provider.extra["quirks"]` at session bootstrap; a provider that supports quirks reads the keys it implements, sets a per-quirk flag, and framework code consults those flags via `getattr(provider, "_<quirk>", False)`. **Today only the vLLM provider has a quirks reader at all** — it logs and ignores unknown keys (so a profile typo surfaces rather than silently mis-configuring) and rejects a non-dict `quirks` with a warning (`provider.py:346-380`). Other providers carry **no quirk-handling code**, so the dict simply sits unconsumed — inert — there.
+### `quirks` — per-provider/model behavior knobs (`config.py`)
+A top-level dict that opts the **active provider** into known wire-format / model-behavior **workarounds**. Because a profile binds to exactly one `provider` + `model`, quirks are where you encode "*this* model on *this* provider misbehaves in way X — apply the framework's fix." The dict is threaded to the provider as `provider.extra["quirks"]` at session bootstrap; a provider that supports quirks reads the keys it implements, sets a per-quirk flag, and framework code consults those flags via `getattr(provider, "_<quirk>", False)`. **Today only the vLLM provider has a quirks reader at all** — it logs and ignores unknown keys (so a profile typo surfaces rather than silently mis-configuring) and rejects a non-dict `quirks` with a warning (`provider.py`). Other providers carry **no quirk-handling code**, so the dict simply sits unconsumed — inert — there.
 
 This is the "specific management" part: a quirk only does something if the bound provider has a reader for it. Every shipped quirk lives in the **vLLM provider** — workarounds for small / local open models served via vLLM:
 
@@ -53,24 +53,24 @@ This is the "specific management" part: a quirk only does something if the bound
 - **`force_narration_between_tools`** — inject a synthetic user prompt after each `tool_result` asking the model to narrate its observation in 1–2 sentences; closes the small-model narration-skipping class (qwen3-14b @ temp=0 skips narration regardless of persona prose).
 - **`auto_finalize_on_complete`** — auto-synthesize `signal_completion()` server-side the instant the composite `is_complete` flips True; closes the context-overflow-at-finalize death for accumulator-style completion (see [completion schemas](13-completion-schemas.md)).
 
-Quirks are **additive**: they default to empty (none active), and a profile turns one on with `quirks: { force_narration_between_tools: true }`. Inheritance is a dict-union with **child-wins-on-collision**, so a child disables a parent's quirk explicitly with `<key>: false` (`config.py:1693-1725`).
+Quirks are **additive**: they default to empty (none active), and a profile turns one on with `quirks: { force_narration_between_tools: true }`. Inheritance is a dict-union with **child-wins-on-collision**, so a child disables a parent's quirk explicitly with `<key>: false` (`config.py`).
 
-### Inheritance & resolution (`config.py:1360` `resolve_profiles`, `config.py:1444` `_merge_profiles`)
+### Inheritance & resolution (`config.py` `resolve_profiles`, `config.py` `_merge_profiles`)
 Profiles compose via `inherits` (a string or list of parent names). Resolution runs after discovery as a topological flatten with cycle detection; afterward `inherits` is cleared. Merge rules:
 - **Collections (union):** `plugins`, `preloaded_plugins`, `env`, `plugin_configs` (deep-merged per plugin/key), `completion_processors` (concatenated), and `quirks` (dict-union, **child-wins**; disable a parent's with `<key>: false`).
 - **Scalars (agreement-or-override):** `model`, `provider`, `gc`, `runtime_limits`, `completion_payload_schema`, `spawn_payload_schema` — parents must agree or the child must override; otherwise it is a hard error.
 - **`max_turns`:** most restrictive (minimum) across parents unless the child overrides.
 - **Never inherited:** `name`, `description`, and `model_tiers`.
 
-### Model / provider resolution at apply time (`jaato_subagent_profiles_reference.md:1037-1047`)
+### Model / provider resolution at apply time (`jaato_subagent_profiles_reference.md`)
 For a subagent the active model is resolved `profile.model` → `SubagentConfig.default_model` → parent session's model; provider similarly `profile.provider` → config default → parent. When `model_tiers` is non-empty, `model` is ignored (warning logged) and the per-turn tier model wins.
 
 ## Lifecycle / flow
 
 1. **Author** a profile file under `.jaato/profiles/` (or premium registers one via entry points).
-2. **Discover** — `discover_profiles()` scans three tiers in precedence order: workspace `.jaato/profiles/` → user `~/.jaato/profiles/` → premium entry-point profiles; higher tier wins on name collision (`config.py:1953`, `jaato_subagent_profiles_reference.md:58-83`).
-3. **Parse** each file into a `SubagentProfile` (`_scan_profiles_dir`, `config.py:1793`); `plugins` entries are split into clean names + preload set + tool scopes.
-4. **Resolve inheritance** — `resolve_profiles()` flattens parents into children, detecting cycles and scalar conflicts (`config.py:1360`).
+2. **Discover** — `discover_profiles()` scans three tiers in precedence order: workspace `.jaato/profiles/` → user `~/.jaato/profiles/` → premium entry-point profiles; higher tier wins on name collision (`config.py`, `jaato_subagent_profiles_reference.md`).
+3. **Parse** each file into a `SubagentProfile` (`_scan_profiles_dir`, `config.py`); `plugins` entries are split into clean names + preload set + tool scopes.
+4. **Resolve inheritance** — `resolve_profiles()` flattens parents into children, detecting cycles and scalar conflicts (`config.py`).
 5. **Select** — client sends `session.new --profile <name>` (IPC) or `create_session(profile="...")` (SDK); `session.profiles` lists available ones.
 6. **Apply** — `JaatoServer` applies the resolved overrides during `initialize()`: variables are expanded, model/provider chosen, plugins exposed with their `plugin_configs`, GC configured, env set (`jaato/CLAUDE.md` Flow).
 7. **Run** — the resulting `JaatoSession` runs the agent; subagents share the parent `JaatoRuntime` but get an isolated session and tool subset.
@@ -102,16 +102,16 @@ env:
   DB_PASSWORD: "vault://secret/myapp#db_password"
 ```
 
-(Schema example adapted from `jaato/CLAUDE.md` "Agent Profiles" and `jaato_subagent_profiles_reference.md:100-142`.)
+(Schema example adapted from `jaato/CLAUDE.md` "Agent Profiles" and `jaato_subagent_profiles_reference.md`.)
 
 ## Relationship to neighboring components
 
-- **Persona / agent identity:** A *profile* is the **technical config**; the *role/identity* (the system prompt that says *how* to behave) lives separately as Markdown under `.jaato/agents/*.md`. The source calls this the "agent persona" only in passing — e.g. the `tool_scopes` comment warns to keep "the agent persona['s]" referenced tools in sync with the allow-list (`config.py:942-945`) — but there is **no dedicated `Persona` class in the profile source**; persona = the agent Markdown that supplies the session's identity/instructions. (Relationship stated; a separate Persona document covers identity in depth.)
+- **Persona / agent identity:** A *profile* is the **technical config**; the *role/identity* (the system prompt that says *how* to behave) lives separately as Markdown under `.jaato/agents/*.md`. The source calls this the "agent persona" only in passing — e.g. the `tool_scopes` comment warns to keep "the agent persona['s]" referenced tools in sync with the allow-list (`config.py`) — but there is **no dedicated `Persona` class in the profile source**; persona = the agent Markdown that supplies the session's identity/instructions. (Relationship stated; a separate Persona document covers identity in depth.)
 - **Model provider plugins:** the profile *selects* one via `provider`/`model` (or `model_tiers`); the provider is itself a plugin configured through `plugin_configs[<provider>]`.
 - **Tool plugins / registry:** the `plugins` list drives which plugins the registry exposes and which tools reach the wire.
 - **Runtime / session:** `JaatoRuntime` + `JaatoServer` consume the resolved profile to build a `JaatoSession`.
 - **Subagents / cascades:** the same profile schema parameterizes delegated subagents; a cascade stage builds on a profile as its substrate.
-- **Premium profile_manager:** `jaato-premium/jaato_premium/profile_manager/` provides WS-based CRUD (`profile.list|get|create|update|delete|validate|scaffold|clone`) over a typed `Profile` dataclass (`schema.py:173`) — a leaner mirror of `SubagentProfile` (name, description, inherits, plugins, provider, model, max_turns, plugin_configs, gc) backed by JSON files in `jaato_premium/jaato_premium/profiles/`.
+- **Premium profile_manager:** `jaato-premium/jaato_premium/profile_manager/` provides WS-based CRUD (`profile.list|get|create|update|delete|validate|scaffold|clone`) over a typed `Profile` dataclass (`schema.py`) — a leaner mirror of `SubagentProfile` (name, description, inherits, plugins, provider, model, max_turns, plugin_configs, gc) backed by JSON files in `jaato_premium/jaato_premium/profiles/`.
 
 ## Example
 
@@ -192,13 +192,13 @@ flowchart LR
 - **Caption:** "A Profile is the declarative, version-controlled config (model, plugins, GC, env) that the runtime resolves and applies to build a session — distinct from the agent Markdown that gives the agent its role."
 
 ## Source references
-- `jaato/jaato-server/shared/plugins/subagent/config.py:872` — `SubagentProfile` dataclass (canonical schema: name, description, plugins, plugin_configs, model, provider, gc, env, inherits, completion/spawn schemas, runtime_limits, model_tiers, apparmor, quirks).
-- `…/config.py:290-418` — `parse_plugin_entry` / `parse_plugin_list`: `plugins` modifier syntax (`mode:preload`/`discover`, `tools:[...]` allow-lists).
-- `…/config.py:736` — `GCProfileConfig`: GC type/threshold/target/pressure/preserve fields.
-- `…/config.py:889` — the persona (`.jaato/agents/*.md`) supplies the session's instructions; the Profile holds runtime config only.
-- `…/config.py:1360` `resolve_profiles` & `…/config.py:1444` `_merge_profiles` — inheritance: union collections, agreement-or-override scalars, min `max_turns`; `…/config.py:1693-1725` — `quirks` dict-union, child-wins.
-- `…/config.py:1027-1053` — the `quirks` field: per-provider/model workaround dict; provider reads keys it knows, unknown keys warned+ignored. `jaato-server/shared/plugins/model_provider/vllm/provider.py:164-231, 346-380` — the four shipped quirks (`coerce_typed_tool_args`, `force_tool_choice_for_lifecycle`, `force_narration_between_tools`, `auto_finalize_on_complete`) and the `provider.extra["quirks"]` read + unknown-key warning.
-- `…/config.py:1953` `discover_profiles` & `…/config.py:1866-1877` — 3-tier discovery precedence; `plugins` required (absent rejected, `[]` = minimal framework set).
+- `jaato/jaato-server/shared/plugins/subagent/config.py` — `SubagentProfile` dataclass (canonical schema: name, description, plugins, plugin_configs, model, provider, gc, env, inherits, completion/spawn schemas, runtime_limits, model_tiers, apparmor, quirks).
+- `…/config.py` — `parse_plugin_entry` / `parse_plugin_list`: `plugins` modifier syntax (`mode:preload`/`discover`, `tools:[...]` allow-lists).
+- `…/config.py` — `GCProfileConfig`: GC type/threshold/target/pressure/preserve fields.
+- `…/config.py` — the persona (`.jaato/agents/*.md`) supplies the session's instructions; the Profile holds runtime config only.
+- `…/config.py` `resolve_profiles` & `…/config.py` `_merge_profiles` — inheritance: union collections, agreement-or-override scalars, min `max_turns`; `…/config.py` — `quirks` dict-union, child-wins.
+- `…/config.py` — the `quirks` field: per-provider/model workaround dict; provider reads keys it knows, unknown keys warned+ignored. `jaato-server/shared/plugins/model_provider/vllm/provider.py` — the four shipped quirks (`coerce_typed_tool_args`, `force_tool_choice_for_lifecycle`, `force_narration_between_tools`, `auto_finalize_on_complete`) and the `provider.extra["quirks"]` read + unknown-key warning.
+- `…/config.py` `discover_profiles` & `…/config.py` — 3-tier discovery precedence; `plugins` required (absent rejected, `[]` = minimal framework set).
 - `jaato/CLAUDE.md` "Agent Profiles" + "Anthropic Claude"/"OpenRouter" knobs — profile schema example, `session.new --profile` flow, `plugin_configs` provider layering (`api_params`, `routing`).
-- `jaato/docs/jaato_subagent_profiles_reference.md:52-54, 1037-1049` — profile vs. agent (instructions) distinction; model/provider resolution chain (profile → config default → parent).
-- `jaato-premium/jaato_premium/profile_manager/schema.py:173` & `…/profile_manager/extension.py` — premium `Profile` dataclass + WS CRUD; profile JSON files in `jaato-premium/jaato_premium/profiles/`.
+- `jaato/docs/jaato_subagent_profiles_reference.md` — profile vs. agent (instructions) distinction; model/provider resolution chain (profile → config default → parent).
+- `jaato-premium/jaato_premium/profile_manager/schema.py` & `…/profile_manager/extension.py` — premium `Profile` dataclass + WS CRUD; profile JSON files in `jaato-premium/jaato_premium/profiles/`.

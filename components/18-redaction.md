@@ -27,13 +27,13 @@ It is a **daemon extension** (entry point `pseudonymization = …extension:creat
 
 ## Key concepts & structure
 
-### The four seats (`extension.py:194`, `_on_session_ready`)
+### The four seats (`extension.py`, `_on_session_ready`)
 On every freshly-set-up session the extension wires four transformers anchored to real seams:
 
 - **Seat 1 — history container redaction.** `set_history_inbound_transformer` pseudonymizes each message **on append** (so canonical history stores placeholders); `set_history_raw_view_transformer` gives **trusted callers** the raw view via an explicit accessor. Trust becomes "I called the raw accessor," not a config flag. This single seat covers memory, journal, GC, reactor, and telemetry-history reads at once.
 - **Seat 2 — tool dispatch swap-back** (`tool_dispatch.py`). Before a tool runs, `swap_back_args` restores real values — tools are **trusted by default** (they need real paths/values to work). Operators list exceptions in `JAATO_REDACTION_UNTRUSTED_TOOLS` (those keep placeholders — for tools that ship args to external sinks). Tool **results** always pass back through `redact_result`, so new sensitive values discovered in output get fresh placeholders before they reach history. *(Wired only when the tool executor exposes its args/result-transformer seam.)*
 - **Seat 3 — outbound user-display swap-back.** Every `AgentOutputEvent` leaving the daemon is swapped back so the **user sees their own data**. The user owns the data, so this boundary is implicitly trusted — the only non-symmetric (un-redacting) inbound→outbound direction. *(Wired only when the server exposes its outbound-event-transformer seam.)*
-- **Seat 4 — telemetry attribute redaction** (`attribute_redactor.py:47`). Registered once globally via the public `register_attribute_redactor` hook (see `17-telemetry`). It is **stateless and irreversible** — no `PseudonymTable`, just bare-class masks (`<EMAIL_ADDRESS>`, `<PERSON>`), because a global redactor can't consult a per-session table and cross-span correlation would itself be a re-identification surface. It **bypasses** any `redaction.audit.*` attribute (already encrypted).
+- **Seat 4 — telemetry attribute redaction** (`attribute_redactor.py`). Registered once globally via the public `register_attribute_redactor` hook (see `17-telemetry`). It is **stateless and irreversible** — no `PseudonymTable`, just bare-class masks (`<EMAIL_ADDRESS>`, `<PERSON>`), because a global redactor can't consult a per-session table and cross-span correlation would itself be a re-identification surface. It **bypasses** any `redaction.audit.*` attribute (already encrypted).
 
 *(Source caveat: the `extension.py` module/class docstrings still say "wiring seat 1 / seats 2–4 in subsequent iterations" — that's **stale**; all four seats wire in `_on_session_ready` today. Don't let the docstring talk you out of the code.)*
 
@@ -44,7 +44,7 @@ On every freshly-set-up session the extension wires four transformers anchored t
 Placeholders are `<CLASS_N>` (`PLACEHOLDER_RE = <([A-Z][A-Z0-9_]*)_(\d+)>`); `redact_text` applies spans, `swap_back_text` reverses them. `PseudonymTable` is a session-scoped bidirectional map with per-class counters, idempotent `add` (re-occurrence returns the existing token), and `serialize_encrypted()` → a NaCl `SecretBox` AEAD blob stored as opaque bytes via the framework's session-attached-state. It dies with the session — **no cross-session re-identification**.
 
 ### Keys & sealed-box audit (`keys.py`, `audit.py`)
-A 32-byte daemon **master key** lives at `~/.jaato/redaction-key` (mode 0600). The pseudonym table is encrypted at rest with that **master key directly** (`extension.py:448` passes `session_key=self._master_key`), so a forked or resumed session can decrypt a table it inherited — the source encrypts and the target decrypts with the same key. (The per-session `HMAC-SHA256(master, session_id)` derivation in `keys.py` is **legacy-fallback-only** now, used to decrypt pre-master-key journals.) On meaningful table mutations, `emit_audit_span` emits a `redaction.audit` span carrying the **full table sealed-box-encrypted** (`AUDIT_SCHEME = "nacl-sealedbox-v1"`, X25519 + XChaCha20-Poly1305) to the pubkey in `JAATO_REDACTION_AUDIT_PUBKEY`. An offline private-key holder reconstructs table evolution from telemetry alone — **the daemon cannot decrypt its own audit trail**, so daemon compromise leaves history confidential.
+A 32-byte daemon **master key** lives at `~/.jaato/redaction-key` (mode 0600). The pseudonym table is encrypted at rest with that **master key directly** (`extension.py` passes `session_key=self._master_key`), so a forked or resumed session can decrypt a table it inherited — the source encrypts and the target decrypts with the same key. (The per-session `HMAC-SHA256(master, session_id)` derivation in `keys.py` is **legacy-fallback-only** now, used to decrypt pre-master-key journals.) On meaningful table mutations, `emit_audit_span` emits a `redaction.audit` span carrying the **full table sealed-box-encrypted** (`AUDIT_SCHEME = "nacl-sealedbox-v1"`, X25519 + XChaCha20-Poly1305) to the pubkey in `JAATO_REDACTION_AUDIT_PUBKEY`. An offline private-key holder reconstructs table evolution from telemetry alone — **the daemon cannot decrypt its own audit trail**, so daemon compromise leaves history confidential.
 
 ## Lifecycle / flow
 
@@ -122,14 +122,14 @@ flowchart TD
 - **Caption:** "Four-seat pseudonymization: Presidio detects PII, a session-scoped NaCl-encrypted table maps it to placeholders — masked for the model and traces, swapped back only for trusted tools and the user's own display."
 
 ## Source references
-- `jaato-premium/jaato_premium/pseudonymization/extension.py:156` — `PseudonymizationExtension`; `_on_session_ready` wiring all four seats `:194` (seat 1 `:240`/`:243`, seat 3 `:247`, seat 2 `:255`–`:281`, seat 4 `:281`/`_wire_seat4` `:368`).
-- `jaato-premium/jaato_premium/pseudonymization/recognizers.py:210` — `build_default_analyzer`; `jaato_recognizers` `:112`; `analyze_to_spans` `:292`.
-- `jaato-premium/jaato_premium/pseudonymization/redaction.py:40` — `PLACEHOLDER_RE` (`<CLASS_N>`); `redact_text` `:43`; `swap_back_text` `:79`.
-- `jaato-premium/jaato_premium/pseudonymization/pseudonym_table.py:69` — `PseudonymTable.add` (idempotent); `serialize_encrypted` (NaCl `SecretBox`) `:118`; `get_raw` `:97`.
-- `jaato-premium/jaato_premium/pseudonymization/keys.py:29` — `load_or_create_master_key` (`~/.jaato/redaction-key`, 0600). The table is encrypted with the **master key directly** (`extension.py:448`, `session_key=self._master_key`) so forked/resumed sessions can decrypt inherited tables; `derive_session_key` (HMAC-SHA256, `keys.py:84`) is **legacy-fallback-only** for pre-master-key journals.
-- `jaato-premium/jaato_premium/pseudonymization/audit.py:46` — `emit_audit_span`; `AUDIT_SCHEME = "nacl-sealedbox-v1"` (X25519 SealedBox) `:32`.
-- `jaato-premium/jaato_premium/pseudonymization/attribute_redactor.py:47` — `redact_attribute` (seat 4: stateless, bare-class, bypasses `redaction.audit.*`).
+- `jaato-premium/jaato_premium/pseudonymization/extension.py` — `PseudonymizationExtension`; `_on_session_ready` wiring all four seats (seat 1, seat 3, seat 2, seat 4 `_wire_seat4`).
+- `jaato-premium/jaato_premium/pseudonymization/recognizers.py` — `build_default_analyzer`; `jaato_recognizers`; `analyze_to_spans`.
+- `jaato-premium/jaato_premium/pseudonymization/redaction.py` — `PLACEHOLDER_RE` (`<CLASS_N>`); `redact_text`; `swap_back_text`.
+- `jaato-premium/jaato_premium/pseudonymization/pseudonym_table.py` — `PseudonymTable.add` (idempotent); `serialize_encrypted` (NaCl `SecretBox`); `get_raw`.
+- `jaato-premium/jaato_premium/pseudonymization/keys.py` — `load_or_create_master_key` (`~/.jaato/redaction-key`, 0600). The table is encrypted with the **master key directly** (`extension.py`, `session_key=self._master_key`) so forked/resumed sessions can decrypt inherited tables; `derive_session_key` (HMAC-SHA256, `keys.py`) is **legacy-fallback-only** for pre-master-key journals.
+- `jaato-premium/jaato_premium/pseudonymization/audit.py` — `emit_audit_span`; `AUDIT_SCHEME = "nacl-sealedbox-v1"` (X25519 SealedBox).
+- `jaato-premium/jaato_premium/pseudonymization/attribute_redactor.py` — `redact_attribute` (seat 4: stateless, bare-class, bypasses `redaction.audit.*`).
 - `jaato-premium/jaato_premium/pseudonymization/tool_dispatch.py` — `swap_back_args` / `redact_result` (seat 2; `JAATO_REDACTION_UNTRUSTED_TOOLS`).
 - `jaato-premium/docs/design/pseudonymization-four-seat.md` — the four-seat design (why the event bus is the wrong seat).
-- `jaato-premium/pyproject.toml:48` — optional extra `pseudonymization = ["pynacl>=1.5","presidio-analyzer>=2.2"]`; daemon-extension entry point `:78`.
-- `jaato/jaato-server/shared/session_history.py:82` — PUBLIC seat-1 seam (`set_inbound_transformer` / `set_raw_view_transformer`); `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py:372` — PUBLIC seat-4 seam (`register_attribute_redactor`).
+- `jaato-premium/pyproject.toml` — optional extra `pseudonymization = ["pynacl>=1.5","presidio-analyzer>=2.2"]`; daemon-extension entry point.
+- `jaato/jaato-server/shared/session_history.py` — PUBLIC seat-1 seam (`set_inbound_transformer` / `set_raw_view_transformer`); `jaato/jaato-server/shared/plugins/telemetry/otel_plugin.py` — PUBLIC seat-4 seam (`register_attribute_redactor`).

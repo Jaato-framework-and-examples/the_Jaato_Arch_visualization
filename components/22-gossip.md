@@ -26,30 +26,30 @@ Gossip sits *above* the **daemon** (`01-daemon`) and its **session manager** —
 ## Key concepts & structure
 
 ### The wire protocol — the `peer.*` events (public SDK)
-The federation speaks in eight event types pre-registered in the **public** SDK (`events.py:270-277`): `PEER_HEARTBEAT`, `PEER_SPAWN_REQUEST`, `PEER_SPAWN_ACCEPTED`, `PEER_SPAWN_REJECTED`, `PEER_AGENT_OUTPUT`, `PEER_AGENT_COMPLETED`, `PEER_STOP_REQUEST`, `PEER_STOP_ACKNOWLEDGED`. They are server-to-server (not client-facing); the public SDK carries the type definitions so any client *can* deserialize them, but **production is gated on premium being installed**.
+The federation speaks in eight event types pre-registered in the **public** SDK (`events.py`): `PEER_HEARTBEAT`, `PEER_SPAWN_REQUEST`, `PEER_SPAWN_ACCEPTED`, `PEER_SPAWN_REJECTED`, `PEER_AGENT_OUTPUT`, `PEER_AGENT_COMPLETED`, `PEER_STOP_REQUEST`, `PEER_STOP_ACKNOWLEDGED`. They are server-to-server (not client-facing); the public SDK carries the type definitions so any client *can* deserialize them, but **production is gated on premium being installed**.
 
 ### One public seam + an internal init contract
-There is exactly **one public entry-point seam**: `jaato.extensions` → `gossip` → `create_extension` (`extension.py:658`). The daemon's `_load_extensions()` (`jaato/jaato-server/server/__main__.py:907`) discovers and starts it like any daemon extension.
+There is exactly **one public entry-point seam**: `jaato.extensions` → `gossip` → `create_extension` (`extension.py`). The daemon's `_load_extensions()` (`jaato/jaato-server/server/__main__.py`) discovers and starts it like any daemon extension.
 
-Inside the extension, a second contract wires the subsystem — but by **direct call, not entry-point discovery** (there is no `jaato.gossip` entry point anywhere). The extension imports and calls `init_gossip(ctx: GossipContext) -> GossipResult` (`extension.py:94` import, `:122` call; defined `gossip_init.py:21`). `GossipContext` hands over the `session_manager`, the `--web-socket`/`--ipc-socket`/`--server-name` CLI args, the parsed `servers.json`, and TLS config (`gossip_interface.py:19`); `GossipResult` returns the `peer_registry`, `health_collector`, `remote_handler`, and `server_reliability` (`gossip_interface.py:44`). Both `init_gossip` and the interface now live in the premium package (the Phase-4 split is done).
+Inside the extension, a second contract wires the subsystem — but by **direct call, not entry-point discovery** (there is no `jaato.gossip` entry point anywhere). The extension imports and calls `init_gossip(ctx: GossipContext) -> GossipResult` (`extension.py` import, call; defined `gossip_init.py`). `GossipContext` hands over the `session_manager`, the `--web-socket`/`--ipc-socket`/`--server-name` CLI args, the parsed `servers.json`, and TLS config (`gossip_interface.py`); `GossipResult` returns the `peer_registry`, `health_collector`, `remote_handler`, and `server_reliability` (`gossip_interface.py`). Both `init_gossip` and the interface now live in the premium package (the Phase-4 split is done).
 
-### `PeerRegistry` — discovery, heartbeat, liveness (`peers.py:98`)
-The heart of Phase 1. Constructed from parsed `servers.json`; `start(health_collector)` (`peers.py:162`) spawns an outbound connection loop per peer plus the heartbeat broadcaster. `PeerState` ∈ `HEALTHY`/`DEGRADED`/`UNREACHABLE` (`peers.py:48`). The `_heartbeat_loop` (`peers.py:322`) broadcasts every `heartbeat_interval_seconds` (default `5.0`); `_check_peer_liveness` (`peers.py:411`) escalates a peer to `DEGRADED` after `degraded_after_missed` (3) and `UNREACHABLE` after `unreachable_after_missed` (5) missed heartbeats (`GossipConfig`, `peers.py:57`). Inbound peer sockets are handed off by the WS server to `handle_peer_connection` (`peers.py:223`); `send_to_peer(name, event)` (`peers.py:465`) routes an event to a specific peer.
+### `PeerRegistry` — discovery, heartbeat, liveness (`peers.py`)
+The heart of Phase 1. Constructed from parsed `servers.json`; `start(health_collector)` (`peers.py`) spawns an outbound connection loop per peer plus the heartbeat broadcaster. `PeerState` ∈ `HEALTHY`/`DEGRADED`/`UNREACHABLE` (`peers.py`). The `_heartbeat_loop` (`peers.py`) broadcasts every `heartbeat_interval_seconds` (default `5.0`); `_check_peer_liveness` (`peers.py`) escalates a peer to `DEGRADED` after `degraded_after_missed` (3) and `UNREACHABLE` after `unreachable_after_missed` (5) missed heartbeats (`GossipConfig`, `peers.py`). Inbound peer sockets are handed off by the WS server to `handle_peer_connection` (`peers.py`); `send_to_peer(name, event)` (`peers.py`) routes an event to a specific peer.
 
-### `ServerHealthCollector` (`health.py:31`)
-Produces a periodic `ServerHealthSnapshot` (`health.py:18`) — CPU, memory, session/agent counts (via `psutil`) — that the registry embeds in each outbound heartbeat, so liveness carries *load* information, not just "alive."
+### `ServerHealthCollector` (`health.py`)
+Produces a periodic `ServerHealthSnapshot` (`health.py`) — CPU, memory, session/agent counts (via `psutil`) — that the registry embeds in each outbound heartbeat, so liveness carries *load* information, not just "alive."
 
-### `RemoteSpawnHandler` — remote subagent delegation (`remote_spawn.py:45`)
-Phase 3, two roles. **Origin** — the daemon entry `execute_spawn` (`remote_spawn.py:236`) bridges the synchronous tool call into the async protocol via `run_coroutine_threadsafe`, calling `request_remote_spawn` (`remote_spawn.py:152`) which builds a `PeerSpawnRequestEvent`, sends it via `PeerRegistry.send_to_peer`, tracks the pending request, and forwards the peer's response events (`accepted`/`rejected`/`output`/`completed`) into the parent session via `inject_prompt_to_session` (per-delta streaming, `:396`/`:414`). **Remote** — `_on_spawn_request` (`remote_spawn.py:636`) receives the request and `_run_remote_subagent` (`:693`) runs it as an **ephemeral session** via `SessionManager.run_ephemeral_session` (`:786` → `session_manager.py:7683` → `create_headless_session` `:4690`), streaming `peer.agent_output`/`peer.agent_completed` back to the origin. The handler is wired onto the **subagent** plugin via `register_remote_handler` so `spawn_subagent(server="gpu-box")` transparently goes off-box.
+### `RemoteSpawnHandler` — remote subagent delegation (`remote_spawn.py`)
+Phase 3, two roles. **Origin** — the daemon entry `execute_spawn` (`remote_spawn.py`) bridges the synchronous tool call into the async protocol via `run_coroutine_threadsafe`, calling `request_remote_spawn` (`remote_spawn.py`) which builds a `PeerSpawnRequestEvent`, sends it via `PeerRegistry.send_to_peer`, tracks the pending request, and forwards the peer's response events (`accepted`/`rejected`/`output`/`completed`) into the parent session via `inject_prompt_to_session` (per-delta streaming). **Remote** — `_on_spawn_request` (`remote_spawn.py`) receives the request and `_run_remote_subagent` runs it as an **ephemeral session** via `SessionManager.run_ephemeral_session` (→ `session_manager.py` → `create_headless_session`), streaming `peer.agent_output`/`peer.agent_completed` back to the origin. The handler is wired onto the **subagent** plugin via `register_remote_handler` so `spawn_subagent(server="gpu-box")` transparently goes off-box.
 
-### `WorkspaceSync` — git-based replication (`workspace_sync.py:69`)
-Phase 5. So a remote subagent operates on the *same* codebase: **origin prepare** detects git info and pushes uncommitted changes on a temp branch; **remote sync** clones or fetches under `~/.jaato/remote_workspaces` (`workspace_sync.py:30`); **pull-back** pushes the subagent's changes and cherry-picks them onto the origin. All via `subprocess` git with timeouts.
+### `WorkspaceSync` — git-based replication (`workspace_sync.py`)
+Phase 5. So a remote subagent operates on the *same* codebase: **origin prepare** detects git info and pushes uncommitted changes on a temp branch; **remote sync** clones or fetches under `~/.jaato/remote_workspaces` (`workspace_sync.py`); **pull-back** pushes the subagent's changes and cherry-picks them onto the origin. All via `subprocess` git with timeouts.
 
 ### Reliability, security, dashboard
-`ServerReliabilityTracker` (`server_reliability.py`) tracks per-peer failures (reusing the reliability `EscalationRule`) to route around flaky nodes. `auth.py`/`tls.py`/`ws_auth_proxy.py` provide **mTLS** between peers and **OIDC SSO** (authlib + signed HMAC-SHA256 session cookies) for the dashboard. `TaskRegistry` (`task_registry.py:39`) + the `dashboard/` web app (a `<jaato-task>` web component, Vite frontend, `docker_launcher.py`) give a federation-wide view of every session.
+`ServerReliabilityTracker` (`server_reliability.py`) tracks per-peer failures (reusing the reliability `EscalationRule`) to route around flaky nodes. `auth.py`/`tls.py`/`ws_auth_proxy.py` provide **mTLS** between peers and **OIDC SSO** (authlib + signed HMAC-SHA256 session cookies) for the dashboard. `TaskRegistry` (`task_registry.py`) + the `dashboard/` web app (a `<jaato-task>` web component, Vite frontend, `docker_launcher.py`) give a federation-wide view of every session.
 
-### `GossipExtension` — the wiring (`extension.py:59`)
-Binds everything through **four generic public hooks** (`extension.py:7`): (1) daemon `start()`/`stop()` lifecycle (`extension.py:278`/`:375`); (2) a **WS connection interceptor** that routes inbound peer connections; (3) a **session hook** `_on_session_ready` (`extension.py:456`) that, per session, registers it in the `TaskRegistry`, wires the environment aspect, and calls `subagent_plugin.register_remote_handler(...)`; (4) the per-session **remote handler / custom aspects**. `start()` (`extension.py:278`) launches the peer registry, the health HTTP endpoint, the WS peer handler, and the dashboard.
+### `GossipExtension` — the wiring (`extension.py`)
+Binds everything through **four generic public hooks** (`extension.py`): (1) daemon `start()`/`stop()` lifecycle (`extension.py`); (2) a **WS connection interceptor** that routes inbound peer connections; (3) a **session hook** `_on_session_ready` (`extension.py`) that, per session, registers it in the `TaskRegistry`, wires the environment aspect, and calls `subagent_plugin.register_remote_handler(...)`; (4) the per-session **remote handler / custom aspects**. `start()` (`extension.py`) launches the peer registry, the health HTTP endpoint, the WS peer handler, and the dashboard.
 
 ## Lifecycle / flow
 
@@ -75,7 +75,7 @@ A remote spawn, end to end:
   "auth": { "issuer": "https://idp.example.com/realms/jaato", "client_id": "…" }  // dashboard OIDC (optional)
 }
 ```
-With no `servers.json`, gossip is completely inert (`peers.py:9`). `transport` is `ws` (the `ipc` value is reserved/skipped). The daemon is launched with `--server-name <name>` so peers can address it.
+With no `servers.json`, gossip is completely inert (`peers.py`). `transport` is `ws` (the `ipc` value is reserved/skipped). The daemon is launched with `--server-name <name>` so peers can address it.
 
 ## Relationship to neighboring components
 
@@ -126,14 +126,14 @@ flowchart LR
 - **Caption:** "Gossip: independent jaato daemons federate over a heartbeat mesh (liveness + health), then delegate subagents to remote peers on a git-synced workspace — output streaming back into the parent session — all behind mTLS and one dashboard."
 
 ## Source references
-- `jaato/jaato-sdk/jaato_sdk/events.py:270` — the `PEER_*` event family (`peer.heartbeat` … `peer.stop_acknowledged`), the public wire protocol (server-to-server; premium-produced).
-- `jaato-premium/jaato_premium/gossip/__init__.py:1` — package overview; entry point `jaato.extensions → gossip → create_extension`.
-- `jaato-premium/jaato_premium/gossip/peers.py:98` — `PeerRegistry`; `PeerState` `:48`, `GossipConfig` (heartbeat 5 s / 3 / 5) `:57`, `_heartbeat_loop` `:322`, `_check_peer_liveness` `:411`, `send_to_peer` `:465`, `handle_peer_connection` `:223`.
-- `jaato-premium/jaato_premium/gossip/health.py:31` — `ServerHealthCollector` (CPU/mem/session snapshot for heartbeats).
-- `jaato-premium/jaato_premium/gossip/remote_spawn.py:45` — `RemoteSpawnHandler`. Origin: `execute_spawn` (daemon entry, `run_coroutine_threadsafe`) `:236` → `request_remote_spawn` `:152`. Remote: `_on_spawn_request` `:636` → `_run_remote_subagent` `:693` → `run_ephemeral_session` (`session_manager.py:7683` → `create_headless_session` `:4690`).
-- `jaato-premium/jaato_premium/gossip/workspace_sync.py:69` — `WorkspaceSync`: `prepare_delegation` (origin) `:145`, `sync_workspace` (remote clone/fetch) `:250`, `apply_modifications` (cherry-pick pull-back) `:403`; base `~/.jaato/remote_workspaces` `:30`.
-- `jaato-premium/jaato_premium/gossip/extension.py:59` — `GossipExtension` (four hooks); `start` `:278`, `_on_session_ready` + `register_remote_handler` `:456`/`:502`, `create_extension` `:658`.
-- `jaato-premium/jaato_premium/gossip/gossip_interface.py:19` — `GossipContext` / `GossipResult` `:44` (internal init contract, called directly from `extension.py:94`/`:122` — **not** an entry point; no `jaato.gossip` entry point exists). Initializer `gossip_init.py:21`.
-- `jaato-premium/jaato_premium/gossip/auth.py:76` — `SSOAuth` (OIDC + signed cookies) for the dashboard; `task_registry.py:39` — `TaskRegistry`; `server_reliability.py` — per-peer `ServerReliabilityTracker`.
-- `jaato/jaato-server/server/__main__.py:907` — `_load_extensions()` (loads the gossip daemon extension); peer-connection handoff in `server/websocket.py:1321-1329` (`_handle_client` from `:1310`).
+- `jaato/jaato-sdk/jaato_sdk/events.py` — the `PEER_*` event family (`peer.heartbeat` … `peer.stop_acknowledged`), the public wire protocol (server-to-server; premium-produced).
+- `jaato-premium/jaato_premium/gossip/__init__.py` — package overview; entry point `jaato.extensions → gossip → create_extension`.
+- `jaato-premium/jaato_premium/gossip/peers.py` — `PeerRegistry`; `PeerState`, `GossipConfig` (heartbeat 5 s / 3 / 5), `_heartbeat_loop`, `_check_peer_liveness`, `send_to_peer`, `handle_peer_connection`.
+- `jaato-premium/jaato_premium/gossip/health.py` — `ServerHealthCollector` (CPU/mem/session snapshot for heartbeats).
+- `jaato-premium/jaato_premium/gossip/remote_spawn.py` — `RemoteSpawnHandler`. Origin: `execute_spawn` (daemon entry, `run_coroutine_threadsafe`) → `request_remote_spawn`. Remote: `_on_spawn_request` → `_run_remote_subagent` → `run_ephemeral_session` (`session_manager.py` → `create_headless_session`).
+- `jaato-premium/jaato_premium/gossip/workspace_sync.py` — `WorkspaceSync`: `prepare_delegation` (origin), `sync_workspace` (remote clone/fetch), `apply_modifications` (cherry-pick pull-back); base `~/.jaato/remote_workspaces`.
+- `jaato-premium/jaato_premium/gossip/extension.py` — `GossipExtension` (four hooks); `start`, `_on_session_ready` + `register_remote_handler`, `create_extension`.
+- `jaato-premium/jaato_premium/gossip/gossip_interface.py` — `GossipContext` / `GossipResult` (internal init contract, called directly from `extension.py` — **not** an entry point; no `jaato.gossip` entry point exists). Initializer `gossip_init.py`.
+- `jaato-premium/jaato_premium/gossip/auth.py` — `SSOAuth` (OIDC + signed cookies) for the dashboard; `task_registry.py` — `TaskRegistry`; `server_reliability.py` — per-peer `ServerReliabilityTracker`.
+- `jaato/jaato-server/server/__main__.py` — `_load_extensions()` (loads the gossip daemon extension); peer-connection handoff in `server/websocket.py` (`_handle_client`).
 - `jaato-premium/tests/e2e_gossip/servers-a.json` — a real two-server `servers.json` (peer list + gossip tuning).

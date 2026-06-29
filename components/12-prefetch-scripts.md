@@ -7,11 +7,11 @@
 
 A jaato persona is a Markdown template (`.jaato/agents/<name>.md`). A pre-fetch script is a small Python file the persona references with a placeholder — `{{!py:scripts/prefetch_<x>.py}}` — that the framework expands while building that persona's system prompt. The script's job is to *gather context the agent would otherwise have to fetch itself*: call an external service, read a memory snapshot, pull ledger usage, or reformat data the supervisor forwarded on the spawn call.
 
-The motivating principle (subagent `README.md:558-565`) is to move mandatory work from "soul-driven" (a tool the model must remember to call) to "body-wired" (framework execution the model can't skip). When a service call has only one acceptable answer under every valid persona choice, the framework makes it for the agent and embeds the structured response in the prompt. The agent sees the result as input data already present, not as a choice — though it retains the *capability* to call the tool directly; only the *requirement* is removed (`README.md:708-714`).
+The motivating principle (subagent `README.md`) is to move mandatory work from "soul-driven" (a tool the model must remember to call) to "body-wired" (framework execution the model can't skip). When a service call has only one acceptable answer under every valid persona choice, the framework makes it for the agent and embeds the structured response in the prompt. The agent sees the result as input data already present, not as a choice — though it retains the *capability* to call the tool directly; only the *requirement* is removed (`README.md`).
 
-Pre-fetch is the **input-side** counterpart to completion artifacts/processors (the output boundary). Inputs are body-fetched on the way in; the model's `signal_completion` payload is the judgment it uniquely produces in the middle; outputs are body-rendered on the way out (`README.md:566-571`).
+Pre-fetch is the **input-side** counterpart to completion artifacts/processors (the output boundary). Inputs are body-fetched on the way in; the model's `signal_completion` payload is the judgment it uniquely produces in the middle; outputs are body-rendered on the way out (`README.md`).
 
-**Python-only, by design — and its shell sibling lives elsewhere.** Persona system-instruction prefetch expands **only** the Python placeholders `{{!py:...}}` / `{{!py?:...}}`: `JaatoSession.configure()` gates strictly on those prefixes and calls `expand_py_placeholders`, which recognizes no other form (`jaato_session.py:2046-2071`). The framework *does* also support **shell-based** body-fetch — but through a **different engine on a different surface**: the inline `{{!command}}` substitution in the **prompt-library prompt/skill-template** renderer (`prompt_library/plugin.py:653-702`, `_expand_commands`), which executes the command via `shared.subprocess_runner.run_command` (30s timeout), substitutes its stdout, and inlines `[command failed: …]` / `[command timed out …]` / `[command error: …]` on failure. The Python prefetch form was *modelled on* that shell placeholder (`dynamic_instructions.py:194`) but kept Python-only for **personas** deliberately: persona prefetch runs framework-authority `render` scripts under the session's AppArmor confinement, a stricter trust model than free-form shell. So "the framework allows shell-based prefetch" is true — it is the prompt-library template layer, **not** persona system-instruction prefetch. (If persona-level *shell* prefetch is ever wanted, that is a new capability, not a documentation gap.)
+**Python-only, by design — and its shell sibling lives elsewhere.** Persona system-instruction prefetch expands **only** the Python placeholders `{{!py:...}}` / `{{!py?:...}}`: `JaatoSession.configure()` gates strictly on those prefixes and calls `expand_py_placeholders`, which recognizes no other form (`jaato_session.py`). The framework *does* also support **shell-based** body-fetch — but through a **different engine on a different surface**: the inline `{{!command}}` substitution in the **prompt-library prompt/skill-template** renderer (`prompt_library/plugin.py`, `_expand_commands`), which executes the command via `shared.subprocess_runner.run_command` (30s timeout), substitutes its stdout, and inlines `[command failed: …]` / `[command timed out …]` / `[command error: …]` on failure. The Python prefetch form was *modelled on* that shell placeholder (`dynamic_instructions.py`) but kept Python-only for **personas** deliberately: persona prefetch runs framework-authority `render` scripts under the session's AppArmor confinement, a stricter trust model than free-form shell. So "the framework allows shell-based prefetch" is true — it is the prompt-library template layer, **not** persona system-instruction prefetch. (If persona-level *shell* prefetch is ever wanted, that is a new capability, not a documentation gap.)
 
 ## Where it sits in the stack
 
@@ -29,41 +29,41 @@ Directly **below** a pre-fetch script is the **Persona** that declares it (the `
 ## Key concepts & structure
 
 ### The placeholder — `{{!py:script.py args}}`
-Recognised by the regex `_PY_PLACEHOLDER` in `dynamic_instructions.py:68`: `\{\{!py(\?)?:([^\s}]+)(?:\s+([^}]*))?\}\}`. The path is everything up to the first whitespace; the rest are space-separated args. The optional `?` (server 0.6.48+) marks the placeholder best-effort.
+Recognised by the regex `_PY_PLACEHOLDER` in `dynamic_instructions.py`: `\{\{!py(\?)?:([^\s}]+)(?:\s+([^}]*))?\}\}`. The path is everything up to the first whitespace; the rest are space-separated args. The optional `?` (server 0.6.48+) marks the placeholder best-effort.
 
 ### `render(context, args) -> str`
-The required entry point. Scripts must define a top-level `def render(context, args)` (`dynamic_instructions.py:23`). The symbol is loaded by `load_script_symbol(path, symbol="render", module_prefix="_jaato_dynprompt")` (`dynamic_instructions.py:258-260`).
+The required entry point. Scripts must define a top-level `def render(context, args)` (`dynamic_instructions.py`). The symbol is loaded by `load_script_symbol(path, symbol="render", module_prefix="_jaato_dynprompt")` (`dynamic_instructions.py`).
 
 ### `RenderContext`
-Defined at `dynamic_instructions.py:107-180`. Fields the script reads: `session`, `runtime`, `registry`, `workspace_path`, `config_root`, `agent_params` (the dict forwarded by the supervisor), `env` (an `os.environ` snapshot), `logger`, `session_id`, and `tool_calls` (empty for input-side prefetch; populated only for completion processors).
+Defined at `dynamic_instructions.py`. Fields the script reads: `session`, `runtime`, `registry`, `workspace_path`, `config_root`, `agent_params` (the dict forwarded by the supervisor), `env` (an `os.environ` snapshot), `logger`, `session_id`, and `tool_calls` (empty for input-side prefetch; populated only for completion processors).
 
 ### Resolution tier
-`resolve_script_path` (`script_loader.py:241-287`) resolves a reference as: absolute path → workspace tier (`<config_root>/<path>`, else `<workspace>/.jaato/<path>`) → user tier (`~/.jaato/<path>`). `load_script_symbol` (`script_loader.py:290-368`) re-executes the script on every call so edits are picked up without a daemon restart, and tracks transitively-imported helpers under `.jaato/scripts/` for mtime-based reload.
+`resolve_script_path` (`script_loader.py`) resolves a reference as: absolute path → workspace tier (`<config_root>/<path>`, else `<workspace>/.jaato/<path>`) → user tier (`~/.jaato/<path>`). `load_script_symbol` (`script_loader.py`) re-executes the script on every call so edits are picked up without a daemon restart, and tracks transitively-imported helpers under `.jaato/scripts/` for mtime-based reload.
 
 ## Lifecycle / flow
 
 1. A caller spawns the persona: `spawn_subagent(profile=<name>, task=..., agent_params={...})`.
-2. If the profile declares a `spawn_payload_schema`, the framework validates `agent_params` against it **before** creating the session (`spawn_schema_loader.py:1-9`) — missing required keys fail at the spawn boundary, not mid-cascade.
-3. The session is created; `JaatoSession.configure()` assembles the system instruction from the persona template, with profile env (`JAATO_WORKSPACE_ROOT` / `JAATO_CONFIG_ROOT` / overlay) already pushed (`dynamic_instructions.py:33-38`).
-4. If the assembled prompt contains `{{!py:` or `{{!py?:`, `configure()` builds a `RenderContext` and calls `expand_py_placeholders` (`jaato_session.py:2046-2071`). When a confine-context factory is set, the expansion runs inside the session's AppArmor confinement (`jaato_session.py:2063-2067`).
-5. For each placeholder, `expand_py_placeholders` (`dynamic_instructions.py:183-306`) resolves the path, loads `render`, invokes `render(context, args)`, and substitutes the returned string.
-6. The expansion is implicitly run-once — rendered a single time per session at configure time (`README.md:942`), before the agent's first turn.
+2. If the profile declares a `spawn_payload_schema`, the framework validates `agent_params` against it **before** creating the session (`spawn_schema_loader.py`) — missing required keys fail at the spawn boundary, not mid-cascade.
+3. The session is created; `JaatoSession.configure()` assembles the system instruction from the persona template, with profile env (`JAATO_WORKSPACE_ROOT` / `JAATO_CONFIG_ROOT` / overlay) already pushed (`dynamic_instructions.py`).
+4. If the assembled prompt contains `{{!py:` or `{{!py?:`, `configure()` builds a `RenderContext` and calls `expand_py_placeholders` (`jaato_session.py`). When a confine-context factory is set, the expansion runs inside the session's AppArmor confinement (`jaato_session.py`).
+5. For each placeholder, `expand_py_placeholders` (`dynamic_instructions.py`) resolves the path, loads `render`, invokes `render(context, args)`, and substitutes the returned string.
+6. The expansion is implicitly run-once — rendered a single time per session at configure time (`README.md`), before the agent's first turn.
 
 ## Configuration / authoring
 
-Scripts live at `<workspace>/.jaato/scripts/<name>.py` (or `~/.jaato/scripts/`). The persona references them in `.jaato/agents/<name>.md`. The spawn schema that mirrors the script's required keys lives at `<config_root>/spawn_schemas/<name>.json` and is named in the profile via `spawn_payload_schema` (`README.md:871`).
+Scripts live at `<workspace>/.jaato/scripts/<name>.py` (or `~/.jaato/scripts/`). The persona references them in `.jaato/agents/<name>.md`. The spawn schema that mirrors the script's required keys lives at `<config_root>/spawn_schemas/<name>.json` and is named in the profile via `spawn_payload_schema` (`README.md`).
 
-**The mirroring rule** (`payload-schema-conventions.md:104-139`): if a persona body-wires a prefetch that reads keys from `context.agent_params`, the spawn schema's `required` array should **exactly mirror** the keys the prefetch needs. This closes the field-drop variance class (a 2026-05-01 load test saw 5/10 rejections because an upstream agent silently dropped forwarded fields). The schema's `description` should name the prefetch path so both are updated in the same diff (`payload-schema-conventions.md:157-163`). Spawn schemas default to `additionalProperties: true` for forward-compat with `agent_params`-mediated framework features like `continuity_scope` (`payload-schema-conventions.md:141-156`, §6).
+**The mirroring rule** (`payload-schema-conventions.md`): if a persona body-wires a prefetch that reads keys from `context.agent_params`, the spawn schema's `required` array should **exactly mirror** the keys the prefetch needs. This closes the field-drop variance class (a 2026-05-01 load test saw 5/10 rejections because an upstream agent silently dropped forwarded fields). The schema's `description` should name the prefetch path so both are updated in the same diff (`payload-schema-conventions.md`). Spawn schemas default to `additionalProperties: true` for forward-compat with `agent_params`-mediated framework features like `continuity_scope` (`payload-schema-conventions.md`, §6).
 
-**Error contract** (`dynamic_instructions.py:62-67`, `99-104`): `{{!py:}}` is strict by default (server 0.6.48+) — any failure (not found, load error, render raise, non-string return, or a return starting with a sentinel like `[prefetch error:`) raises `DynamicInstructionsError` and aborts session creation with a structured `ErrorEvent`. `{{!py?:}}` is best-effort: the same failures are swallowed and the error marker (`[script not found: ...]`, `[script load error: ...]`, `[script error: ...]`) is substituted into the prompt for the agent to reason about.
+**Error contract** (`dynamic_instructions.py`): `{{!py:}}` is strict by default (server 0.6.48+) — any failure (not found, load error, render raise, non-string return, or a return starting with a sentinel like `[prefetch error:`) raises `DynamicInstructionsError` and aborts session creation with a structured `ErrorEvent`. `{{!py?:}}` is best-effort: the same failures are swallowed and the error marker (`[script not found: ...]`, `[script load error: ...]`, `[script error: ...]`) is substituted into the prompt for the agent to reason about.
 
 ## Relationship to neighboring components
 
-A pre-fetch script **belongs to a Persona** (the `.md` template references it) and **consumes the spawn payload** (`agent_params`) the caller forwarded. The **spawn schema** (`spawn_payload_schema`, resolved by `spawn_schema_loader.py`) guards the same boundary by validating that the caller supplied the keys the script needs — the two are intentionally kept in lockstep. On the far side of the agent, the **completion schema** (`completion_payload_schema`) and **completion artifacts** form the symmetric output boundary: prefetch is body-fetched input, completion artifacts are body-rendered output, and the model's structured `signal_completion` payload is the judgment in between (`README.md:933-944`).
+A pre-fetch script **belongs to a Persona** (the `.md` template references it) and **consumes the spawn payload** (`agent_params`) the caller forwarded. The **spawn schema** (`spawn_payload_schema`, resolved by `spawn_schema_loader.py`) guards the same boundary by validating that the caller supplied the keys the script needs — the two are intentionally kept in lockstep. On the far side of the agent, the **completion schema** (`completion_payload_schema`) and **completion artifacts** form the symmetric output boundary: prefetch is body-fetched input, completion artifacts are body-rendered output, and the model's structured `signal_completion` payload is the judgment in between (`README.md`).
 
 ## Example
 
-`.jaato/agents/kyc_aml.md` (persona body, `README.md:619-633`):
+`.jaato/agents/kyc_aml.md` (persona body, `README.md`):
 
 ```markdown
 You are the KYC/AML agent.  The framework has already called both
@@ -72,7 +72,7 @@ external services on your behalf — interpret the responses below.
 {{!py:scripts/prefetch_kyc_aml.py}}
 ```
 
-`.jaato/scripts/prefetch_kyc_aml.py` (`README.md:635-659`):
+`.jaato/scripts/prefetch_kyc_aml.py` (`README.md`):
 
 ```python
 import json
@@ -94,7 +94,7 @@ def render(context, args):
     )
 ```
 
-The supervisor passes the case fields via `agent_params` on the spawn (`README.md:666-677`), and the mirroring `spawn_schemas/kyc_aml.json` lists `tomador_dni` and `tomador_nombre` in `required`. At configure time the framework calls both services and embeds the responses in the prompt; the agent reads them as data already present and produces only the decision.
+The supervisor passes the case fields via `agent_params` on the spawn (`README.md`), and the mirroring `spawn_schemas/kyc_aml.json` lists `tomador_dni` and `tomador_nombre` in `required`. At configure time the framework calls both services and embeds the responses in the prompt; the agent reads them as data already present and produces only the decision.
 
 ## Diagram
 
@@ -150,13 +150,13 @@ flowchart LR
 - **Caption:** "Pre-fetch scripts run at session bootstrap: the framework body-fetches context (service calls, forwarded case data) and injects it into the persona's prompt before the agent's first turn — its required keys mirror the spawn schema."
 
 ## Source references
-- `jaato/jaato-server/shared/dynamic_instructions.py:1-39` — module purpose: input-side `{{!py:...}}` expansion, runs during `configure()` before first turn.
-- `jaato/jaato-server/shared/dynamic_instructions.py:62-104,183-306` — placeholder regex, strict/best-effort `?` contract, failure sentinels, and the `expand_py_placeholders` substitution logic.
-- `jaato/jaato-server/shared/dynamic_instructions.py:107-180` — `RenderContext` fields handed to `render` (`agent_params`, `registry`, `runtime`, `workspace_path`, etc.).
-- `jaato/jaato-server/shared/script_loader.py:241-368` — `resolve_script_path` (`.jaato/` tier) and `load_script_symbol` (loads `render`, re-executes per call).
-- `jaato/jaato-server/shared/jaato_session.py:2046-2071` — where `configure()` invokes expansion, optionally inside AppArmor confinement.
-- `jaato/jaato-server/shared/spawn_schema_loader.py:1-9,38-107` — `spawn_payload_schema` validated before session creation; the input boundary that mirrors prefetch keys.
-- `jaato/docs/design/payload-schema-conventions.md:104-163` — the mirroring rule: spawn schema `required` exactly mirrors the body-wired prefetch's keys.
-- `jaato/jaato-server/shared/plugins/subagent/README.md:553-714,933-944` — body-wired pattern, the kyc_aml worked example, execution-context contract, and input/output symmetry table.
-- `jaato/jaato-server/shared/plugins/prompt_library/plugin.py:653-702` — `_expand_commands`: the shell `{{!command}}` substitution (prompt/skill-template layer, NOT persona prefetch) — `run_command` via `subprocess_runner`, 30s timeout, stdout substituted, inline `[command failed/timed out/error: …]` markers.
-- `jaato/jaato-server/shared/jaato_session.py:2046-2071` — persona system-instruction prefetch gates strictly on `{{!py:` / `{{!py?:` and calls `expand_py_placeholders` (no shell form for personas).
+- `jaato/jaato-server/shared/dynamic_instructions.py` — module purpose: input-side `{{!py:...}}` expansion, runs during `configure()` before first turn.
+- `jaato/jaato-server/shared/dynamic_instructions.py` — placeholder regex, strict/best-effort `?` contract, failure sentinels, and the `expand_py_placeholders` substitution logic.
+- `jaato/jaato-server/shared/dynamic_instructions.py` — `RenderContext` fields handed to `render` (`agent_params`, `registry`, `runtime`, `workspace_path`, etc.).
+- `jaato/jaato-server/shared/script_loader.py` — `resolve_script_path` (`.jaato/` tier) and `load_script_symbol` (loads `render`, re-executes per call).
+- `jaato/jaato-server/shared/jaato_session.py` — where `configure()` invokes expansion, optionally inside AppArmor confinement.
+- `jaato/jaato-server/shared/spawn_schema_loader.py` — `spawn_payload_schema` validated before session creation; the input boundary that mirrors prefetch keys.
+- `jaato/docs/design/payload-schema-conventions.md` — the mirroring rule: spawn schema `required` exactly mirrors the body-wired prefetch's keys.
+- `jaato/jaato-server/shared/plugins/subagent/README.md` — body-wired pattern, the kyc_aml worked example, execution-context contract, and input/output symmetry table.
+- `jaato/jaato-server/shared/plugins/prompt_library/plugin.py` — `_expand_commands`: the shell `{{!command}}` substitution (prompt/skill-template layer, NOT persona prefetch) — `run_command` via `subprocess_runner`, 30s timeout, stdout substituted, inline `[command failed/timed out/error: …]` markers.
+- `jaato/jaato-server/shared/jaato_session.py` — persona system-instruction prefetch gates strictly on `{{!py:` / `{{!py?:` and calls `expand_py_placeholders` (no shell form for personas).
