@@ -1,0 +1,14 @@
+node_modules/
+vendor/
+dist/
+*.tsbuildinfo
+package-lock.json
+.jaato/sessions/
+.jaato/logs/
+.jaato/cascade_state/
+.jaato/.artifact_tracker.json
+report.txt
+temp.log
+trip.md
+__pycache__/
+*.pyc
