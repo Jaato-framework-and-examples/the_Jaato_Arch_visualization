@@ -11,12 +11,12 @@
 //   } });
 //   console.log(await s.ask("Plan a trip to Paris and save it to trip.md"));
 //
-// Same daemon-side findings as examples/python-sdk/ex06 (see its header + the
-// README): jaato gates file/cli tools (set a permissive policy); file_edit won't
-// initialise on this build (PR-146), so file work goes via cli; and the vague
-// "plan a trip and save it" is a flaky loop trigger (models ask for clarification
-// — which errors headless — or just print the answer). So the live set is
-// cli + web_search + todo and the task REQUIRES tool output (→ report.txt).
+// Same daemon-side deviations as examples/python-sdk/ex06 (see its header + the
+// README): jaato gates file/cli tools (set a permissive policy); file_edit is
+// omitted (its backup dir can't resolve before init), so file work goes via cli;
+// and the vague "plan a trip and save it" is a flaky loop trigger (models ask for
+// clarification — which errors headless — or just print the answer). So the live
+// set is cli + web_search + todo and the task REQUIRES tool output (→ report.txt).
 //
 // Standing substitutions (see README): `...CONN`, `...AUTH`, the model literal,
 // the permissive policy, the reduced plugin set + tool-requiring task.

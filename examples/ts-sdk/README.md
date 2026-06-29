@@ -52,15 +52,10 @@ Each file maps to `mastra.md` (the TypeScript jaato side); the Python `§N` maps
    provider:"openrouter"}` in place of the docs' `{model:"gpt-4o",
    provider:"openai"}`.
 4. **explicit `plugins`** — the daemon requires a `plugins` key on an inline spec.
-5. **`configRoot` on declarative examples** (ex03/04/08/09) — see the first finding.
+5. **`configRoot` on declarative examples** (ex03/04/08/09) — see the first note below.
 
-## Findings (surfaced by running the docs e2e against the WS transport)
+## Notes / deviations from the docs
 
-- **WS facade race (fixed upstream, PR #417).** `JaatoClient.session()` threw "no
-  session id" — `openSession` checked `sessionId` immediately after the
-  fire-and-forget `createSession`, before the async `SessionInfoEvent` set it
-  (~2s for a cold session). Fixed by waiting for `SessionInfoEvent` (the TS analog
-  of Python's `create_session` wait). Requires `@jaato/sdk` ≥ that fix.
 - **WS declarative resolution needs `configRoot`.** Unlike the IPC client, a WS
   client gets an auto-provisioned per-session workspace, and the daemon resolves
   declarative assets (profiles/agents) from *that* workspace's `.jaato` — not from
@@ -69,12 +64,12 @@ Each file maps to `mastra.md` (the TypeScript jaato side); the Python `§N` maps
 - **WS file ops are sandboxed.** ex06's `cli` writes `report.txt` into the WS
   session's auto-provisioned workspace (correct isolation), not this project dir —
   so the example asserts on the model's output, not a local file.
-- **ex06 / ex07 / ex08 model behaviour** (same daemon + model as python-sdk):
-  file_edit's PR-146 init bug → file work via `cli`; "delete temp.log" / "plan a
-  trip" are flaky loop triggers → tool-requiring tasks + a permission policy; and
-  **`gemini-2.5-flash` tends not to call `spawn_subagent`** (ex08), so the
-  delegation is fully wired but whether the lead actually delegates is
-  model-dependent (a stronger agentic model delegates reliably).
+- **ex06 / ex07 / ex08 task shape** (same daemon + model as python-sdk): file_edit
+  is dropped (its backup dir can't resolve before init) → file work via `cli`;
+  "delete temp.log" / "plan a trip" are flaky loop triggers → tool-requiring tasks
+  + a permission policy; and whether the lead actually calls `spawn_subagent`
+  (ex08) is model-dependent, so the delegation is fully wired but the lead may
+  terminate without delegating.
 - **ex09 cascade** — the `.jaato/` reactor + scripts are identical to python-sdk
-  (daemon-side); real cross-stage data flow needs the typed-payload hoist
-  (jaato PR #414, on main).
+  (daemon-side); cross-stage data flows via the typed-payload bus-hoist (the
+  server hoists the validated payload onto the event).

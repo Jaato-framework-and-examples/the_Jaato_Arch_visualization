@@ -11,7 +11,7 @@
 //   console.log(person?.name, person?.age);
 //
 // `profile` is a named declarative asset (.jaato/profiles/person-extractor.json
-// embeds the schema on this build), so this passes `workspacePath: WORKSPACE`.
+// embeds the schema), so this passes `workspacePath: WORKSPACE`.
 // Standing substitutions (see README): `...CONN`. (Model/provider + plugins live
 // in the profile JSON.)
 

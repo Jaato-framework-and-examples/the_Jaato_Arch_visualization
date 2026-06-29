@@ -16,14 +16,11 @@ The doc leaves `approve(tool_name)` as an illustrative predicate. Here it is a
 real one — auto-approving so the example is headless (the langchain variant
 prompts via input()).
 
-FINDING: the doc's `s.ask("Delete temp.log")` is a flaky way to trigger the gate
-— a model may decline a destructive shell delete on safety grounds, or answer
-conversationally instead of calling the tool, so the gate never fires (model-
-dependent). The on_permission mechanism (the example's actual subject) is
-identical for ANY gated tool, so we make the gate fire deterministically: ask for
-something only the shell can provide (the system `date`, which the model can't
-answer without the tool), with `defaultPolicy:"ask"` so every cli call is gated →
-on_permission is asked → approves.
+The on_permission mechanism is identical for any gated tool. The prompt asks for
+something only the shell can provide (the system `date`), and `defaultPolicy:"ask"`
+gates every cli call → on_permission is always asked → approves. This makes the
+gate fire deterministically rather than the doc's "Delete temp.log", which a model
+may decline or answer conversationally without calling the tool.
 
 Standing deviations (see README): `**CONN`, `**AUTH` (pass: cred knob), the
 model/provider literal, the ask-policy + benign command above.

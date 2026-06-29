@@ -20,11 +20,11 @@ import { fileURLToPath } from "node:url";
 // Project dir (one up from src/).
 export const WORKSPACE = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// FINDING (WS path): unlike the IPC client, a WS client gets an auto-provisioned
-// per-session workspace, and the daemon resolves declarative assets
-// (profiles/agents) from THAT workspace's .jaato — not from `workspacePath`. So
-// the declarative examples (ex03/04/08/09) must point `configRoot` at this
-// project's .jaato so `agent:"pirate"` / `profile:"person-extractor"` resolve.
+// Unlike the IPC client, a WS client gets an auto-provisioned per-session
+// workspace, and the daemon resolves declarative assets (profiles/agents) from
+// THAT workspace's .jaato — not from `workspacePath`. So the declarative examples
+// (ex03/04/08/09) must point `configRoot` at this project's .jaato so
+// `agent:"pirate"` / `profile:"person-extractor"` resolve.
 export const CONFIG_ROOT = join(WORKSPACE, ".jaato");
 
 // Dedicated daemon's WS endpoint — the same daemon python-sdk/daemon.sh runs

@@ -10,12 +10,12 @@
 //   });
 //   console.log(await s.ask("Delete temp.log"));
 //
-// Same finding as examples/python-sdk/ex07: the doc's "Delete temp.log" is a
+// Same deviation as examples/python-sdk/ex07: the doc's "Delete temp.log" is a
 // flaky gate trigger (models refuse a destructive shell delete, or answer
 // conversationally instead of calling the tool). The onPermission mechanism is
-// identical for ANY gated tool, so we make the gate fire deterministically: ask
-// for something only the shell can provide (the system `date`) with
-// defaultPolicy "ask" so every cli call is gated → onPermission is asked.
+// identical for ANY gated tool, so the gate fires deterministically: ask for
+// something only the shell can provide (the system `date`) with defaultPolicy
+// "ask" so every cli call is gated → onPermission is asked.
 //
 // Standing substitutions (see README): `...CONN`, `...AUTH`, the model literal,
 // the ask-policy + benign command.

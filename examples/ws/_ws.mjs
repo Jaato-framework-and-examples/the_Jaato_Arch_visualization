@@ -48,6 +48,22 @@ export async function connect() {
   return { ws, send, next, until, close: () => ws.close() };
 }
 
+// Re-attach to a persisted session across a new connection. A WS connection
+// auto-provisions its own workspace, so to reach a session created on an earlier
+// connection the client must first select that session's original workspace
+// (from session.list) — then session.attach resolves the right storage and the
+// daemon replays history + accepts new turns. Returns the session's workspace.
+export async function reattach(c, sid) {
+  c.send({ type: "command.execute", command: "session.list", args: [] });
+  const list = await c.until((f) => f.type === "session.list");
+  const entry = list.sessions.find((s) => s.id === sid);
+  if (!entry) throw new Error(`session ${sid} not in session.list`);
+  c.send({ type: "workspace.select", name: entry.workspace_path }); // re-target the session's workspace
+  await new Promise((r) => setTimeout(r, 1000));
+  c.send({ type: "command.execute", command: "session.attach", args: [sid] });
+  return entry.workspace_path;
+}
+
 // Collect agent.output text until turn.completed (or session.terminated), then
 // return the model's reply. Mirrors the doc's "← agent.output … ← turn.completed".
 // Bounded by maxMs so a turn that never completes can't hang the example.

@@ -3,9 +3,7 @@
 # Fires from a reactor rule matching agent.completed where source_agent ==
 # 'summarize'. Same shape as spawn_summarize.py: the prior stage's typed
 # signal_completion payload is hoisted onto the event, so the summarize
-# profile's `summary` field is reachable as event.get("summary"). (Requires the
-# typed-payload hoist — server with jaato PR #414 — otherwise the payload sits
-# one level too deep and event.get("summary") is None.)
+# profile's `summary` field is reachable as event.get("summary").
 
 
 def execute(params, event, ctx):

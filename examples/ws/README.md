@@ -25,8 +25,8 @@ daemon's self-signed Jaato Dev CA for `wss://`. The bearer token is read from
 | File | Frame sequence | ona.md |
 |---|---|---|
 | `ex1_basic_session.mjs` | connect → `session.new` → `message.send` → `agent.output`/`turn.completed` | §1 |
-| `ex2_attach_replay.mjs` | detach → `session.attach` (replay) | §2 |
-| `ex3_attach_followup.mjs` | `session.attach` → `message.send` (continue) | §3 |
+| `ex2_attach_replay.mjs` | detach → reconnect (`session.list` → `workspace.select`) → `session.attach` (replay) | §2 |
+| `ex3_attach_followup.mjs` | reconnect → `session.attach` → `message.send` (continue) | §3 |
 | `ex4_lifecycle.mjs` | `session.list` / `session.stop` / `session.end` | §4 |
 
 The wire frames (`connect` greeting, `command.execute`/`session.new`,
@@ -44,20 +44,22 @@ verbatim from the doc; each file's header shows the doc snippet alongside.
   pre-installed `backend` profile. (Provider = `openrouter`,
   model = `google/gemini-2.5-flash`.)
 
-## Findings
+## Notes
 
-- **ex1 + ex4 are e2e-green** — the basic round-trip and the lifecycle frames
-  (`session.list` → a session list, `session.stop`, `session.end`) work.
-- **Raw `session.attach` (ex2/ex3) doesn't behave as ona.md §2/§3 shows on this
-  build** (triaged with the framework owner):
-  - **ex2 — no replay (by design on this path).** The daemon deliberately skips
-    re-emitting state on this attach path, so "raw attach replays prior turns" is
-    aspirational for the raw-frame path — not a bug to wait on.
-  - **ex3 — send-after-reattach isn't processed (a real readiness gap, flagged,
-    non-blocking).** The connection's session *is* set and the send reaches the
-    reloaded session, but the restored session doesn't start a turn on it (a
-    re-attach-readiness gap, #413-flavour). The session persists (it appears in
-    `session.list`); the gap is the send→turn start on a restored session.
-
-  ex2/ex3 send the correct doc frames and report the observed behaviour (bounded
-  so they never hang); the smoke runs them as informational.
+- **ex1 + ex4** exercise the basic round-trip and the lifecycle frames
+  (`session.list` → a session list, `session.stop`, `session.end`).
+- **Re-attaching across connections needs a `workspace.select` first** (ex2/ex3).
+  Each WS connection auto-provisions its own workspace, so a second connection
+  can't see a session created on the first one until it re-targets that session's
+  workspace. The reconnect sequence is: `session.list` (each entry carries its
+  `workspace_path`) → `workspace.select <that path>` → `session.attach <sid>`.
+  The daemon then restores the session from disk, replays its history (ex2), and
+  the session keeps its memory (ex3). The cold restore is asynchronous: a send
+  issued while it settles can return a recoverable `"Session not found"`, so the
+  reconnect helper resends until output arrives.
+- **The opaque `"Session not found"` is deliberate, not a rough edge.** Workspace
+  isolation is a security boundary — a connection only sees its selected
+  workspace, and the daemon won't reveal that a session exists in another one
+  (that would leak cross-workspace session existence). So `workspace.select` is
+  how a client legitimately re-targets a workspace it owns; it isn't a workaround
+  for a vague error.

@@ -19,13 +19,10 @@ Doc snippet (verbatim shape):
         await done.wait()   # the daemon auto-continues 'lead' as each subagent COMPLETES
         print("".join(out))
 
-FINDING (the doc snippet can't terminate as written): the prose says "the lead
-must be completion-gated" and the wait resolves "only when 'lead'
-signal_completion's" — but signal_completion is only EXPOSED when the profile
-declares a completion_payload_schema, and the doc's inline profile omits it. So
-the lead can never signal_completion → SESSION_TERMINATED never fires →
-done.wait() hangs. This file adds the completion gate the prose requires (a
-`blurb` schema) to the inline profile; everything else is the doc verbatim.
+The lead must be completion-gated for the wait to resolve: SESSION_TERMINATED
+fires only when 'lead' calls signal_completion, which is exposed only when the
+profile declares a completion_payload_schema. The doc's inline profile omits it,
+so this file adds a `blurb` schema; everything else is the doc verbatim.
 
 Subagent targets (researcher, writer) are discovered from .jaato/profiles/, and
 the lead persona from .jaato/agents/, so this passes `workspace_path=WORKSPACE`.
