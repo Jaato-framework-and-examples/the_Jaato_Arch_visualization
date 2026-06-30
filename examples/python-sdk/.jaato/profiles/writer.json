@@ -1,7 +1,7 @@
 {
   "name": "writer",
   "description": "Writing specialist. Turns research notes into a short, vivid blurb.",
-  "model": "google/gemini-2.5-flash",
+  "model": "anthropic/claude-sonnet-4.5",
   "provider": "openrouter",
   "max_turns": 4,
   "plugins": [],
@@ -10,5 +10,6 @@
       "api_key": "pass://jaato/openrouter/api-key"
     }
   },
-  "system_instructions": "You are a writing specialist. Given research notes, write a single short, vivid blurb (2-3 sentences), then stop."
+  "system_instructions": "You are a writing specialist. Given research notes, write a single short, vivid blurb (2-3 sentences), then stop.",
+  "suppress_base_instructions": true
 }
