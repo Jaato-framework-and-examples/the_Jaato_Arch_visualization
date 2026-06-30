@@ -31,6 +31,10 @@ The client triggers stage 1 (extract); watch the daemon log, or attach a
 
 Standing deviations (see README): the dedicated-daemon connection (ipc socket /
 ws url+token+ca). Model/provider + plugins live in the profile JSONs.
+
+Scaffold a comparable skeleton — this file then customizes it:
+    jaato-scaffold new cascade --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ipc
+    jaato-scaffold new cascade --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ws --url wss://localhost:8099 --ca ~/.jaato/certs/ca.crt
 """
 import asyncio
 import sys

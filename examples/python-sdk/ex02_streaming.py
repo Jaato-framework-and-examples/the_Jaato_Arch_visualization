@@ -13,6 +13,10 @@ strands.md §2, openai-agents.md §2, claude-agent.md §2.
 Standing deviations (see README): the dedicated-daemon connection, the
 model/provider literal + `**AUTH` (pass: cred knob), and the `plugins` key the
 inline spec requires.
+
+Scaffold a comparable skeleton — this file then customizes it:
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ipc
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport in_process
 """
 import asyncio
 import sys

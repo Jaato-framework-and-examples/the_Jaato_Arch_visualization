@@ -24,6 +24,10 @@ named declarative asset, so this example passes `workspace_path=WORKSPACE` (+
 `config_root` so the in-process runtime resolves the named profile; ipc ignores
 config_root). Model/provider + plugins live in the profile JSON, not inline here.
 Standing deviations (see README): the dedicated-daemon connection.
+
+Scaffold a comparable skeleton — this file then customizes it:
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ipc
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport in_process
 """
 import asyncio
 import sys

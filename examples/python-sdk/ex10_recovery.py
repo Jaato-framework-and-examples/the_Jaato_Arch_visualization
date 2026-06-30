@@ -19,6 +19,10 @@ trusting the daemon's self-signed dev CA via `ca=` (scoped to that connection).
 Appears in: pydantic-ai.md §10 (canonical form), agno.md §10, claude-agent.md §10,
 openai-agents.md §10, strands.md §10, langchain.md §10 (langchain passes
 `on_status_change=print`; the others use the lambda shown here).
+
+Scaffold a comparable skeleton — this file then customizes it:
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ipc --recoverable
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ws --recoverable --url wss://localhost:8099 --ca ~/.jaato/certs/ca.crt
 """
 import asyncio
 import sys
