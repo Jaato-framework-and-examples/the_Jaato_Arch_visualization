@@ -7,9 +7,11 @@ Ten worked examples, simplest first, each shown in **Strands Agents** and **jaat
 
 So Strands gives you a minimal, model-first agent that lives in your process and composes into multi-agent topologies you assemble; jaato gives you runtime/provider-agnostic, isolated, recoverable agents behind a boundary with server-enforced completion gates. Read it as a trade, not a scoreboard.
 
-> **Setup.** Strands: `pip install strands-agents` (`strands-agents-tools` for the built-in toolset). jaato-sdk: `pip install jaato-sdk` + a reachable daemon. The facade front door: `from jaato_sdk import IPCClient, IPCRecoveryClient, ask, AgentError, PermissionUnhandled`. All jaato calls are `async` (Strands agents are callable synchronously and via `invoke_async` / `stream_async`).
+> **Setup.** Strands: `pip install strands-agents` (`strands-agents-tools` for the built-in toolset). jaato: `import jaato` → `jaato.session(mode=…)` (errors via `from jaato_sdk import AgentError, PermissionUnhandled`). All jaato calls are `async` (Strands agents are callable synchronously and via `invoke_async` / `stream_async`).
 
-`IPCClient.session(...)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0`). It forwards `profile` / `agent` / `cascade_driver_id` to the session, so both the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …, "plugins": []}` — an inline spec needs an explicit `plugins` key; `[]` = the minimal framework set) work. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` and **raise** on failure (`AgentError`, `PermissionUnhandled`). `s.client` exposes the underlying low-level client for mixing high- and low-level calls on one session.
+> **Two ways to run the *same* agent (three transports).** `jaato.session(mode=…)` runs the runtime **embedded in your process** (`mode="in_process"`, no daemon — the direct analog to how Strands runs) **or** against a **daemon**: locally (`mode="ipc"`, what `IPCClient.session` does under the hood) or remotely over WebSocket (`mode="ws", url="wss://…", token=…`). The session spec and the `s.ask`/`complete`/`stream` facade are **identical**; `mode` is the only variable — the daemon modes add isolation, multi-tenancy, and crash-recovery (auto-reconnect via `IPCRecoveryClient` — Example 10). **Examples 1–8 each run in-process** by flipping `mode` (identical spec + machinery, so the same agent and behaviour — parity validated at the prompt and event level); **recovery (Example 10)** is daemon-only by definition; **cascade (9)** is in-process-capable and landing (it needs the premium reactor engine wired).
+
+`jaato.session(mode=…)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0`). It forwards `profile` / `agent` / `cascade_driver_id` to the session, so both the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …, "plugins": []}` — an inline spec needs an explicit `plugins` key; `[]` = the minimal framework set) work. The runnable example profiles set two determinism knobs (kept out of the snippets below for brevity): **`"suppress_base_instructions": True`** — drop the operator/user-tier base prompt so the session is **lean, deterministic, and leak-proof** (identical in-process and via the daemon) — and, in the agentic examples (6, 7), **`"cli(preload)"`** in `plugins`, which forces the `cli` tool *eager* onto the wire (plain plugin names are lazy-discovered) so a multi-plugin session is deterministic in both modes. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` and **raise** on failure (`AgentError`, `PermissionUnhandled`). `s.client` exposes the underlying low-level client for mixing high- and low-level calls on one session.
 
 ---
 
@@ -26,24 +28,20 @@ print(result)                                   # AgentResult is stringable to t
 
 **jaato-sdk**
 ```python
-import asyncio
-from jaato_sdk import IPCClient
+import asyncio, jaato
 
 async def main():
-    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
+    # mode="ipc" → the daemon; mode="in_process" → embedded, no daemon. Same call either way.
+    async with jaato.session(mode="ipc",
+            profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
         print(await s.ask("Who are you? One sentence."))
 
 asyncio.run(main())
 ```
-…or the one-shot module helper:
-```python
-from jaato_sdk import ask
-print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}))
-```
 
-**Runnable:** [`examples/python-sdk/ex01_basic_ask.py`](../examples/python-sdk/ex01_basic_ask.py)
+**Runnable:** [`examples/python-sdk/ex01_basic_ask.py`](../examples/python-sdk/ex01_basic_ask.py) — run `… ipc` or `… in_process`
 
-**Side by side.** A Strands `Agent` is **callable** — `agent("…")` runs the model-driven loop **in your process** and returns an `AgentResult`. jaato opens an isolated session on a (possibly auto-started) daemon and `ask`s. The agent runs *in your process* in one case, *behind a boundary* in the other.
+**Side by side.** A Strands `Agent` is **callable** — `agent("…")` runs the model-driven loop **in your process** and returns an `AgentResult`. jaato `ask`s the same way — **in your process** (`mode="in_process"`) or **behind the daemon boundary** (`mode="ipc"`/`"ws"`, for isolation/recovery). Same `s.ask`; you choose where the agent runs.
 
 ## 2. Streaming the reply
 
@@ -56,12 +54,12 @@ async for event in agent.stream_async("Tell me a short story."):
 
 **jaato-sdk**
 ```python
-async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
+async with jaato.session(mode="ipc", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
     async for chunk in s.stream("Tell me a short story."):
         print(chunk, end="", flush=True)
 ```
 
-**Runnable:** [`examples/python-sdk/ex02_streaming.py`](../examples/python-sdk/ex02_streaming.py)
+**Runnable:** [`examples/python-sdk/ex02_streaming.py`](../examples/python-sdk/ex02_streaming.py) — run `… ipc` or `… in_process`
 
 **Side by side.** Strands' `stream_async` yields **all** agent events — text deltas, tool usage, reasoning steps (with built-in cancellation); you filter for the text. jaato's `s.stream(...)` is an `AsyncIterable[str]` of model-output chunks that raises `AgentError`/`PermissionUnhandled` after it drains (the richer event stream is there too, via `s.client`).
 
@@ -81,12 +79,12 @@ print(agent("And your name?"))                  # same session → it remembers 
 **jaato-sdk** — the **session is the memory**; the system prompt is a persona file:
 ```python
 # persona lives in .jaato/agents/pirate.md (the system instructions), referenced by name:
-async with IPCClient.session(agent="pirate", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
+async with jaato.session(mode="ipc", agent="pirate", profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:
     await s.ask("Hello")
     print(await s.ask("And your name?"))         # same session → it remembers
 ```
 
-**Runnable:** [`examples/python-sdk/ex03_persona_memory.py`](../examples/python-sdk/ex03_persona_memory.py)
+**Runnable:** [`examples/python-sdk/ex03_persona_memory.py`](../examples/python-sdk/ex03_persona_memory.py) — run `… ipc` or `… in_process`
 
 **Side by side.** Strands keeps conversation in the `Agent`'s in-memory `messages`, optionally persisted by a pluggable `SessionManager` (File / S3 / Redis / Bedrock AgentCore Memory) and trimmed by a `ConversationManager`. jaato keeps state **in the daemon session**; a second `ask` continues it. A system prompt is a reusable **persona** (`agent="pirate"`), not constructor config.
 
@@ -105,12 +103,12 @@ print(person.name, person.age)
 **jaato-sdk** — a typed **completion schema** the *server* enforces:
 ```python
 # the "person-extractor" profile declares a completion_payload_schema (.jaato/completion_schemas/person.json)
-async with IPCClient.session(profile="person-extractor") as s:
+async with jaato.session(mode="ipc", profile="person-extractor") as s:
     person = await s.complete("Alice is 30.")   # dict | None (server-validated payload)
     print(person["name"], person["age"])
 ```
 
-**Runnable:** [`examples/python-sdk/ex04_typed_completion.py`](../examples/python-sdk/ex04_typed_completion.py)
+**Runnable:** [`examples/python-sdk/ex04_typed_completion.py`](../examples/python-sdk/ex04_typed_completion.py) — run `… ipc` or `… in_process`
 
 **Side by side.** Strands' `structured_output(Model, prompt)` constrains the model to a Pydantic schema and validates **in your process**, returning the typed object. jaato makes typed output a **server-side completion gate**: the agent must call `signal_completion(payload)`, the daemon validates it and bounces a wrong-shape payload back to the model to retry — the agent can't "finish" malformed, regardless of which client is connected. Under the hood both lean on **JSON Schema** at the model layer (Strands generates it from your Pydantic model; jaato authors it directly) and can use provider **strict / grammar-constrained decoding**; the difference is Strands validates with **Pydantic** in-process and hands you a **typed object**, while jaato validates **server-side with `jsonschema`** and hands you a **dict**.
 
@@ -131,7 +129,7 @@ print(agent("Weather in Paris?"))
 
 **jaato-sdk** — a client-provided ("host") tool the daemon calls back into:
 ```python
-async with IPCClient.session(
+async with jaato.session(mode="ipc",
         profile={"model": "gpt-4o", "provider": "openai", "plugins": []},
         client_tools=[{
             "name": "get_weather", "description": "Return the weather for a city.",
@@ -142,7 +140,7 @@ async with IPCClient.session(
     print(await s.ask("Weather in Paris?"))
 ```
 
-**Runnable:** [`examples/python-sdk/ex05_client_tool.py`](../examples/python-sdk/ex05_client_tool.py)
+**Runnable:** [`examples/python-sdk/ex05_client_tool.py`](../examples/python-sdk/ex05_client_tool.py) — run `… ipc` or `… in_process`
 
 **Side by side.** Strands derives the tool schema from the function's hints/docstring (`@tool`) and runs the call inline in your process (it also ships a `strands-agents-tools` package and speaks MCP). jaato's `client_tools` registers a schema **the daemon's agent loop invokes**, calling back into your client for the handler — the loop, retries, and result-threading happen server-side. (jaato can also use **server-side** plugins — `cli`, `web_search`, … — via the profile's `plugins`, with no client code; Example 6.)
 
@@ -154,17 +152,15 @@ agent = Agent(tools=[get_weather, search, calculator])
 agent("Plan a trip to Paris.")      # model → tool calls → results → model, in your process
 ```
 
-**jaato-sdk** — the daemon **is** the loop; pick the plugin set and `ask`:
+**jaato-sdk** — the loop runs **in the session** (embedded or daemon); pick the plugin set and `ask`:
 ```python
-async with IPCClient.session(profile={
-        "model": "gpt-4o", "provider": "openai",
-        "plugins": ["cli", "web_search", "file_edit", "todo"]}) as s:
+async with jaato.session(mode="ipc", profile={"model": "gpt-4o", "provider": "openai", "plugins": ["cli(preload)", "web_search", "todo"]}) as s:
     print(await s.ask("Plan a trip to Paris and save it to trip.md"))
 ```
 
-**Runnable:** [`examples/python-sdk/ex06_multitool.py`](../examples/python-sdk/ex06_multitool.py)
+**Runnable:** [`examples/python-sdk/ex06_multitool.py`](../examples/python-sdk/ex06_multitool.py) — run `… ipc` or `… in_process`
 
-**Side by side.** Strands' whole premise is the **model-driven loop** — you supply tools and a prompt, the model plans and chains the calls **in your process** with minimal scaffolding. In jaato the loop — model → tool calls (permission-checked, parallelizable) → results → model — runs **inside the confined runner**; you choose the tools and `ask`. The loop is your dependency's code in one case, infrastructure in the other.
+**Side by side.** Strands' whole premise is the **model-driven loop** — you supply tools and a prompt, the model plans and chains the calls **in your process** with minimal scaffolding. In jaato the loop — model → tool calls (permission-checked, parallelizable) → results → model — runs **wherever the session runs** — embedded (`mode="in_process"`) or the daemon's confined runner (`mode="ipc"`/`"ws"`); same loop, same result; the daemon adds per-session **sandbox isolation**, not different behaviour (so "the daemon runs the loop" is the wrong mental model — the *runtime* runs it); you choose the tools and `ask`. The loop is your dependency's code in one case, infrastructure in the other.
 
 ## 7. Human-in-the-loop tool approval
 
@@ -182,13 +178,13 @@ agent("Delete temp.log")                           # the hook intercepts the gat
 
 **jaato-sdk** — permissions are built-in; pass an `on_permission` callback:
 ```python
-async with IPCClient.session(
-        profile={"model": "gpt-4o", "provider": "openai", "plugins": ["cli"]},
+async with jaato.session(mode="ipc",
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": ["cli(preload)"]},
         on_permission=lambda ev: "y" if approve(ev.tool_name) else "n") as s:
     print(await s.ask("Delete temp.log"))
 ```
 
-**Runnable:** [`examples/python-sdk/ex07_permissions.py`](../examples/python-sdk/ex07_permissions.py)
+**Runnable:** [`examples/python-sdk/ex07_permissions.py`](../examples/python-sdk/ex07_permissions.py) — run `… ipc` or `… in_process`
 
 **Side by side.** Strands intercepts tool calls at the **agent-loop level** via its hook system — a `BeforeToolCallEvent` hook can raise an **interrupt** to pause for human approval and resume, all **in your process** (you handle the interrupt and continue). jaato's is **daemon-side**: `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor can park on a `HandoffGate`, ask a human **out-of-band** (a webhook bridge), then drive the same session's retry by id — pause→approve→resume with **no client attached** (see the resilience doc). Same shape; in-process-and-you-resume vs daemon-side-and-out-of-band.
 
@@ -214,11 +210,12 @@ right specialist, and synthesise their results into the final answer.
 ```
 The client sends the **task** as the first prompt; the lead delegates server-side:
 ```python
-import asyncio
-from jaato_sdk import IPCClient, EventType
+import asyncio, jaato
+from jaato_sdk import EventType
 
-async with IPCClient.session(agent="lead",
-        profile={"model": "gpt-4o", "provider": "openai", "plugins": ["subagent"]}) as s:
+async with jaato.session(mode="ipc", agent="lead",   # mode="in_process" runs the delegation embedded too
+        profile={"model": "gpt-4o", "provider": "openai",   # the runnable example uses a capable model (claude-sonnet-4.5) for delegation
+                 "plugins": ["subagent(preload)", "permission"]}) as s:
     done, out = asyncio.Event(), []
     s.client.subscribe(EventType.AGENT_OUTPUT, lambda e: out.append(getattr(e, "text", "")))
     s.client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: done.set())   # NOT turn.completed
@@ -227,7 +224,7 @@ async with IPCClient.session(agent="lead",
     print("".join(out))
 ```
 
-**Runnable:** [`examples/python-sdk/ex08_subagent.py`](../examples/python-sdk/ex08_subagent.py)
+**Runnable:** [`examples/python-sdk/ex08_subagent.py`](../examples/python-sdk/ex08_subagent.py) — run `… ipc` or `… in_process`
 
 **Side by side.** Strands offers a *menu* of multi-agent patterns — **agents-as-tools** (a lead agent treats specialists as callable tools, shown here), **Swarm** (agents autonomously hand off), **Graph** (a deterministic directed graph of agents), and **Workflow** — all running **in your process**. jaato's delegation is **async and daemon-driven**: the lead persona calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** in its own context (a per-subagent isolated runner + cgroup is designed but not yet shipped), and its result returns as a `[SUBAGENT … COMPLETED]` event the daemon uses to auto-continue the lead until it composes and `signal_completion`s. Because that spans many turns, the facade one-shots don't fit — you wait on `s.client` for the final `SESSION_TERMINATED`. (How the lead knows the targets: its **persona** gives the *role*, the **first prompt** carries the *task*, and the `subagent` plugin's `list_subagent_profiles` discovers the available **profiles** from `.jaato/profiles/`.)
 
@@ -278,7 +275,7 @@ def execute(params, event, ctx):
 
 **Runnable:** [`examples/python-sdk/ex09_cascade.py`](../examples/python-sdk/ex09_cascade.py)
 
-**Side by side.** Strands' `Graph` is a **deterministic, in-process orchestration you drive** (DAG or cyclic), with state flowing along the edges. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** reacts to that completion event and spawns the successor (threading the prior stage's typed payload into a freed warm slot). The client only triggers stage 1; the pipeline then runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated/observable, and you branch or fan out by adding **rules, not code**. *(A client `for`-loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse — see the cascade docs.)*
+**Side by side.** Strands' `Graph` is a **deterministic, in-process orchestration you drive** (DAG or cyclic), with state flowing along the edges. A jaato **cascade** is **event- and reactor-driven, server-side**: each stage is an **isolated headless session** that just `signal_completion`s 'done' — *ignorant of what comes next* — and a **reactor** reacts to that completion event and spawns the successor (threading the prior stage's typed payload into a freed warm slot). The client only triggers stage 1; the pipeline then runs **decoupled in the daemon** — surviving the client disconnecting, each stage independently isolated/observable, and you branch or fan out by adding **rules, not code**. The cascade machinery is **runtime-level** (the event bus + `create_session` live on the runtime), so the same chain can run **in-process** (`mode="in_process"`) when jaato-premium is installed and its reactor engine is registered — the daemon is just where it runs by default. *(A client `for`-loop over `s.complete` can sequence stages too — but that's **you** orchestrating in-process, which any framework does; the cascade proper is the **daemon** orchestrating on events. Production splits the hop into a two-event `agent.completed`→`slot.settled` handoff for warm-slot reuse — see the cascade docs.)*
 
 ## 10. Production: persistence, recovery, observability
 
@@ -311,7 +308,7 @@ async with IPCRecoveryClient.session(
 Not a scorecard — if you already think in Strands, here's what actually changes when you move to jaato, and what it buys you:
 
 - **`structured_output` becomes a server-enforced completion gate.** `agent.structured_output(Model, …)` constrains the model and validates with **Pydantic in your process**, handing back a typed object; jaato's `completion_payload_schema` makes the agent call `signal_completion(payload)`, the **daemon** validates it with `jsonschema` and bounces a wrong-shape payload back to the model to retry — the agent literally can't "finish" off-shape regardless of which client is attached. Same instinct, enforced at the boundary (you get a validated **dict**, not a typed object).
-- **Your in-process callable `Agent` becomes an isolated daemon session.** `agent("…")` runs the model-driven loop *inside your process* with your conversation in the `Agent`'s `messages`; jaato opens a **session on a long-lived daemon** where state lives server-side and each agent runs in its **own AppArmor-confinable, workspace-scoped subprocess**. A persona file (`agent="pirate"`) replaces constructor config, and the session *is* the memory — a tool crash or memory blowup is contained server-side, not in your app. It's also **provider- and runtime-agnostic** (OpenAI / Anthropic / local GPUs), with no Bedrock default to override.
+- **Your in-process callable `Agent` can *stay* in-process — or become an isolated daemon session.** jaato runs the *same* agent **embedded** (`mode="in_process"`, like Strands) **or** as a confined per-session subprocess (`mode="ipc"`/`"ws"`) — so you keep the in-process simplicity *and* gain isolation, multi-tenancy, permissions, and crash-recovery when you want them, by flipping `mode`, not rewriting the agent. State lives server-side under the daemon modes, a persona file (`agent="pirate"`) replaces constructor config, and it's **provider- and runtime-agnostic** (OpenAI / Anthropic / local GPUs), with no Bedrock default to override.
 - **You stop wiring the agent loop and the multi-agent topologies yourself.** Strands' premise is that *you* assemble the loop and pick from a menu — agents-as-tools, **Swarm**, **Graph**, **Workflow** — all running in your process and driven by your code. In jaato the loop (model → permission-checked tool calls → results → model) is **infrastructure inside the confined runner**; delegation is **async + daemon-driven** (a supervisor persona `spawn_subagent`s and ends its turn, the daemon auto-continues it as each specialist completes); and a multi-stage pipeline isn't a `Graph` you drive but an **event- + reactor-driven cascade** — each stage an isolated headless session that just `signal_completion`s 'done', with reactors spawning the successor server-side. You branch and fan out by adding **rules, not code**, and the pipeline survives the client disconnecting.
 - **Hooks/interrupts HITL becomes daemon-side permissions and out-of-band gates.** A Strands `BeforeToolCallEvent` hook raising an `interrupt()` pauses the loop **in your process** and you resume it; jaato's permissions are **built-in** — `on_permission` answers inline, and for *headless* sessions the escalation is a **bus event** a reactor parks on a `HandoffGate` to ask a human **out-of-band** (a webhook bridge), then drives the same session's retry by id — pause→approve→resume with **no client attached**. Durability and recovery come the same way: `IPCRecoveryClient` auto-reconnects across a daemon bounce, sessions persist server-side and re-attach by id.
 
