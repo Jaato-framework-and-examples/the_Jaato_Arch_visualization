@@ -20,6 +20,10 @@ example passes `workspace_path=WORKSPACE` (+ `config_root` so the in-process
 runtime resolves the persona; ipc ignores config_root). Standing requirement:
 explicit `plugins` (`[]`). Standing deviations (see README): the dedicated-daemon
 connection, the model/provider literal + `**AUTH` (pass: cred knob).
+
+Scaffold a comparable skeleton — this file then customizes it:
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ipc
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport in_process
 """
 import asyncio
 import sys

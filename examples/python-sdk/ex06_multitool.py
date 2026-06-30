@@ -31,6 +31,10 @@ Standing requirement: explicit `plugins`. Standing deviations (see README): the
 dedicated-daemon connection, the model/provider literal, the permissive policy,
 the reduced plugin set, and the tool-requiring task above. Runs in WORKSPACE so
 cli's cwd is here (report.txt is gitignored).
+
+Scaffold a comparable skeleton — this file then customizes it:
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ipc
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport in_process
 """
 import asyncio
 import sys

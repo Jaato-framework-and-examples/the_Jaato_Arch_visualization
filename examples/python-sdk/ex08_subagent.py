@@ -23,6 +23,10 @@ in-process); `env_file` applies to both.
 
 Appears in: pydantic-ai.md §8, langchain.md §8, agno.md §8, claude-agent.md §8,
 openai-agents.md §8, strands.md §8.
+
+Scaffold a comparable skeleton — this file then customizes it:
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport ipc
+    jaato-scaffold new client --workspace . --provider openrouter --model google/gemini-2.5-flash --transport in_process
 """
 import asyncio
 import sys
