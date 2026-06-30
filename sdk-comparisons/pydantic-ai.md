@@ -9,7 +9,7 @@ So the trade is: Pydantic AI gives you a tightly-typed agent that lives in your 
 
 > **Setup.** Pydantic AI: `pip install pydantic-ai`. jaato: `import jaato` → `jaato.session(mode=…)` (errors via `from jaato_sdk import AgentError, PermissionUnhandled`). All jaato calls are `async` (Pydantic AI offers both `run` (async) and `run_sync`).
 
-> **Two ways to run the *same* agent (three transports).** `jaato.session(mode=…)` runs the runtime **embedded in your process** (`mode="in_process"`, no daemon — the direct analog to how Pydantic AI runs) **or** against a **daemon**: locally (`mode="ipc"`, what `IPCClient.session` does under the hood) or remotely over WebSocket (`mode="ws", url="wss://…", token=…`). The session spec and the `s.ask`/`complete`/`stream` facade are **identical**; `mode` is the only variable — the daemon modes add isolation, multi-tenancy, and crash-recovery (auto-reconnect via `IPCRecoveryClient` — Example 10). **Examples 1–8 each run in-process** by flipping `mode` (identical spec + machinery, so the same agent and behaviour — parity validated at the prompt and event level); **recovery (Example 10)** is daemon-only by definition; **cascade (9)** is in-process-capable and landing (it needs the premium reactor engine wired).
+> **Two ways to run the *same* agent (three transports).** `jaato.session(mode=…)` runs the runtime **embedded in your process** (`mode="in_process"`, no daemon — the direct analog to how Pydantic AI runs) **or** against a **daemon**: locally (`mode="ipc"`, what `IPCClient.session` does under the hood) or remotely over WebSocket (`mode="ws", url="wss://…", token=…`). The session spec and the `s.ask`/`complete`/`stream` facade are **identical**; `mode` is the only variable — the daemon modes add isolation, multi-tenancy, and crash-recovery (auto-reconnect via `session(recovery=True)` on either daemon mode — Example 10). **Examples 1–8 each run in-process** by flipping `mode` (identical spec + machinery, so the same agent and behaviour — parity validated at the prompt and event level); **recovery (Example 10)** is daemon-only by definition; **cascade (9)** is in-process-capable and landing (it needs the premium reactor engine wired).
 
 `jaato.session(mode=…)` forwards `profile` / `agent` / `cascade_driver_id` to the session, so both the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …, "plugins": []}` — an inline spec needs an explicit `plugins` key; `[]` = the minimal framework set) work. The runnable example profiles set two determinism knobs (kept out of the snippets below for brevity): **`"suppress_base_instructions": True`** — drop the operator/user-tier base prompt so the session is **lean, deterministic, and leak-proof** (identical in-process and via the daemon) — and, in the agentic examples (6, 7), **`"cli(preload)"`** in `plugins`, which forces the `cli` tool *eager* onto the wire (plain plugin names are lazy-discovered) so a multi-plugin session is deterministic in both modes. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` and **raise** on failure (`AgentError`, `PermissionUnhandled`). `env_file` applies to every mode; `socket_path`/`auto_start` are IPC-only (ignored in-process).
 
@@ -299,19 +299,21 @@ agent.run_sync("…")                     # agent runs, tool calls, tokens → L
 # durability (message history, retries) is yours to persist; runs live in your process.
 ```
 
-**jaato-sdk** — durability/recovery/tracing are daemon properties:
+**jaato-sdk** — durability/recovery/tracing are daemon properties; `recovery=True` swaps in the auto-reconnect client on **either daemon transport**:
 ```python
-from jaato_sdk import IPCRecoveryClient
-async with IPCRecoveryClient.session(
-        profile={"model": "gpt-4o", "provider": "openai", "plugins": []},
-        on_status_change=lambda st: print(st.state)) as s:      # auto-reconnect across daemon restarts
-    print(await s.ask("Long task…"))                            # survives a daemon bounce
+import jaato
+# recovery=True → IPCRecoveryClient (mode="ipc") or WSRecoveryClient (mode="ws"); not in_process (no daemon)
+async with jaato.session(mode="ipc", recovery=True,
+        profile="recovery-demo",                              # a NAMED profile — see note below
+        on_status_change=lambda st: print(st.state)) as s:    # reconnecting / connected / closed
+    print(await s.ask("Long task…"))                          # survives a daemon bounce
 # sessions also persist server-side: detach (fire-and-forget) and re-attach by id with the low-level client.
 ```
+> **Recovery needs a *named* profile.** The session record persists the profile **name** (+ workspace), not an inline spec — so the fresh daemon re-resolves the profile's `pass://` credential by name. An inline `profile={…}` has no name to recover from.
 
-**Runnable:** [`examples/python-sdk/ex10_recovery.py`](../examples/python-sdk/ex10_recovery.py)
+**Runnable:** [`examples/python-sdk/ex10_recovery.py`](../examples/python-sdk/ex10_recovery.py) — run `… ipc` or `… ws` (the two daemon transports)
 
-**Side by side.** Pydantic AI gives you **first-class observability** (Logfire's LLM-aware traces, token/cost panels — and since it's OTel, any backend) but leaves **durability to you**: the run lives in your process, and you persist `all_messages()` to resume. jaato inherits durability from the **daemon**: `IPCRecoveryClient` auto-reconnects and recovers an in-flight turn across a restart; sessions persist server-side and re-attach by id; OpenTelemetry tracing is a daemon flag. Plus what Pydantic AI has no analog for: each session runs in its **own AppArmor-confinable, workspace-scoped subprocess**.
+**Side by side.** Pydantic AI gives you **first-class observability** (Logfire's LLM-aware traces, token/cost panels — and since it's OTel, any backend) but leaves **durability to you**: the run lives in your process, and you persist `all_messages()` to resume. jaato inherits durability from the **daemon**: `session(recovery=True)` auto-reconnects and recovers an in-flight turn across a restart — on **either daemon transport** (`mode="ipc"` or `"ws"`; in-process has no daemon to recover); sessions persist server-side and re-attach by id; OpenTelemetry tracing is a daemon flag. Plus what Pydantic AI has no analog for: each session runs in its **own AppArmor-confinable, workspace-scoped subprocess**.
 
 ---
 
