@@ -1,34 +1,37 @@
-"""ex01 — Hello world: one prompt, one reply.
+"""ex01 — Hello world: one prompt, one reply. ONE example, two transports:
+
+    python ex01_basic_ask.py ipc
+    python ex01_basic_ask.py in_process
+
+`jaato.session(mode=...)` picks the transport (the daemon via IPC, or the
+embedded in-process runtime); the SAME `profile={...}` and kwargs run both ways.
+`socket_path` is ipc-only (ignored in-process); `env_file` applies to both.
 
 Appears in: langchain.md §1, pydantic-ai.md §1, mastra.md §1, agno.md §1,
 strands.md §1, openai-agents.md §1, claude-agent.md §1.
 
-The doc shows two §1 snippets — the session form and the one-shot module
-helper. Both are here, run back to back (verbatim shape):
-
-    async with IPCClient.session(profile={"model": "gpt-4o", "provider": "openai"}) as s:
-        print(await s.ask("Who are you? One sentence."))
-    # …or the one-shot module helper, for a throwaway call:
-    print(await ask("Who are you? One sentence.", profile={"model": "gpt-4o", "provider": "openai"}))
-
-Three standing deviations apply (see README): `**CONN` for the dedicated
-daemon, the model/provider literal + `**AUTH` (pass: cred knob), and the `plugins` key the installed
-daemon now requires on an inline spec.
+Standing deviations (see README): the dedicated-daemon connection, the
+model/provider literal + `**AUTH` (pass: cred knob), and the `plugins` key the
+inline spec requires.
 """
 import asyncio
-from jaato_sdk import IPCClient, ask
+import sys
+
+import jaato
 from _config import CONN, AUTH
+
+mode = sys.argv[1] if len(sys.argv) > 1 else "ipc"
 
 
 async def main():
-    # The session form — the shape all seven SDK docs use in §1.
-    async with IPCClient.session(**CONN,
-            profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH}) as s:
-        print(await s.ask("Who are you? One sentence."))
-
-    # …or the one-shot module helper, for a throwaway call.
-    print(await ask("Who are you? One sentence.", **CONN,
-                    profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [], **AUTH}))
+    async with jaato.session(
+        mode=mode,
+        profile={"model": "google/gemini-2.5-flash", "provider": "openrouter", "plugins": [],
+                 "suppress_base_instructions": True, **AUTH},
+        env_file=CONN["env_file"],
+        socket_path=CONN["socket_path"],   # ipc-only; ignored in-process
+    ) as s:
+        print(f"[{mode}]", await s.ask("Who are you? One sentence."))
 
 
 asyncio.run(main())

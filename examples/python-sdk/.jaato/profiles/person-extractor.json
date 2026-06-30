@@ -5,6 +5,7 @@
   "provider": "openrouter",
   "max_turns": 3,
   "plugins": [],
+  "suppress_base_instructions": true,
   "plugin_configs": {
     "openrouter": {
       "api_key": "pass://jaato/openrouter/api-key"
