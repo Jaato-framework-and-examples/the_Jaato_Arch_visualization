@@ -63,6 +63,25 @@ CONN = dict(
 # completion schemas / reactors from <PROJECT_DIR>/.jaato/.
 WORKSPACE = PROJECT_DIR
 
+# WS endpoint for the recovery example (ex10) `ws` mode — the SAME dedicated
+# daemon (python-sdk/daemon.sh runs it with `--web-socket :8099`). The daemon
+# writes its WS auth token to ~/.jaato/ws.token (the ws/ examples read the same
+# file); read it lazily so the ipc / in_process examples don't require it.
+WS_URL = "wss://localhost:8099"
+
+
+def ws_token():
+    """The dedicated daemon's WS auth token (written to ~/.jaato/ws.token)."""
+    return open(os.path.expanduser("~/.jaato/ws.token")).read().strip()
+
+
+# The daemon's wss uses a self-signed "Jaato Dev CA". ex10's ws mode passes this
+# to jaato.session(ca=...) so the WS client trusts it for THAT connection only —
+# scoped to the socket, never a global SSL_CERT_FILE env var (which replaces the
+# system roots process-wide and would break any other HTTPS, e.g. the provider).
+WS_CA = os.path.expanduser("~/.jaato/certs/ca.crt")
+
+
 # The docs write the inline profile as {"model": "gpt-4o", "provider": "openai"}.
 # The examples keep that dict inline and visible (faithful shape) but substitute
 # the locally-reachable OpenRouter model. `google/gemini-2.5-flash` is cheap and
