@@ -1,0 +1,12 @@
+{
+  "name": "recovery-demo",
+  "description": "Recovery example profile — credential in a NAMED profile so the daemon re-resolves pass:// on restart/reattach (inline configs aren't persisted to the recovery record).",
+  "provider": "openrouter",
+  "model": "google/gemini-2.5-flash",
+  "plugins": [],
+  "plugin_configs": {
+    "openrouter": {
+      "api_key": "pass://jaato/openrouter/api-key"
+    }
+  }
+}
