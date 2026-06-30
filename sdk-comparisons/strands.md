@@ -9,7 +9,7 @@ So Strands gives you a minimal, model-first agent that lives in your process and
 
 > **Setup.** Strands: `pip install strands-agents` (`strands-agents-tools` for the built-in toolset). jaato: `import jaato` → `jaato.session(mode=…)` (errors via `from jaato_sdk import AgentError, PermissionUnhandled`). All jaato calls are `async` (Strands agents are callable synchronously and via `invoke_async` / `stream_async`).
 
-> **Two ways to run the *same* agent (three transports).** `jaato.session(mode=…)` runs the runtime **embedded in your process** (`mode="in_process"`, no daemon — the direct analog to how Strands runs) **or** against a **daemon**: locally (`mode="ipc"`, what `IPCClient.session` does under the hood) or remotely over WebSocket (`mode="ws", url="wss://…", token=…`). The session spec and the `s.ask`/`complete`/`stream` facade are **identical**; `mode` is the only variable — the daemon modes add isolation, multi-tenancy, and crash-recovery. **Examples 1–7 each run in-process** by flipping `mode` (byte-for-byte result parity); **recovery (Example 10)** is daemon-only by definition; subagent (8) and cascade (9) are in-process-capable and landing.
+> **Two ways to run the *same* agent (three transports).** `jaato.session(mode=…)` runs the runtime **embedded in your process** (`mode="in_process"`, no daemon — the direct analog to how Strands runs) **or** against a **daemon**: locally (`mode="ipc"`, what `IPCClient.session` does under the hood) or remotely over WebSocket (`mode="ws", url="wss://…", token=…`). The session spec and the `s.ask`/`complete`/`stream` facade are **identical**; `mode` is the only variable — the daemon modes add isolation, multi-tenancy, and crash-recovery. **Examples 1–8 each run in-process** by flipping `mode` (byte-for-byte result parity — delegation, Example 8, included); **recovery (Example 10)** is daemon-only by definition; **cascade (9)** is in-process-capable and landing (it needs the premium reactor engine wired).
 
 `jaato.session(mode=…)` defaults the load-bearing knobs (`client_type=ClientType.API` so completion works headless, `env_file=".env"`, `auto_start=True`, `connect_timeout=120.0`). It forwards `profile` / `agent` / `cascade_driver_id` to the session, so both the declarative style (`profile="researcher"`, named assets in `.jaato/`) and the programmatic style (`profile={"model": …, "provider": …, "plugins": []}` — an inline spec needs an explicit `plugins` key; `[]` = the minimal framework set) work. The runnable example profiles set two determinism knobs (kept out of the snippets below for brevity): **`"suppress_base_instructions": True`** — drop the operator/user-tier base prompt so the session is **lean, deterministic, and leak-proof** (identical in-process and via the daemon) — and, in the agentic examples (6, 7), **`"cli(preload)"`** in `plugins`, which forces the `cli` tool *eager* onto the wire (plain plugin names are lazy-discovered) so a multi-plugin session is deterministic in both modes. `ask`/`complete`/`stream` wait on the first of `{TURN_COMPLETED, SESSION_TERMINATED}` and **raise** on failure (`AgentError`, `PermissionUnhandled`). `s.client` exposes the underlying low-level client for mixing high- and low-level calls on one session.
 
@@ -210,11 +210,12 @@ right specialist, and synthesise their results into the final answer.
 ```
 The client sends the **task** as the first prompt; the lead delegates server-side:
 ```python
-import asyncio
-from jaato_sdk import IPCClient, EventType
+import asyncio, jaato
+from jaato_sdk import EventType
 
-async with IPCClient.session(agent="lead",
-        profile={"model": "gpt-4o", "provider": "openai", "plugins": ["subagent"]}) as s:
+async with jaato.session(mode="ipc", agent="lead",   # mode="in_process" runs the delegation embedded too
+        profile={"model": "gpt-4o", "provider": "openai",   # the runnable example uses a capable model (claude-sonnet-4.5) for delegation
+                 "plugins": ["subagent(preload)", "permission"]}) as s:
     done, out = asyncio.Event(), []
     s.client.subscribe(EventType.AGENT_OUTPUT, lambda e: out.append(getattr(e, "text", "")))
     s.client.subscribe_once(EventType.SESSION_TERMINATED, lambda e: done.set())   # NOT turn.completed
@@ -223,7 +224,7 @@ async with IPCClient.session(agent="lead",
     print("".join(out))
 ```
 
-**Runnable:** [`examples/python-sdk/ex08_subagent.py`](../examples/python-sdk/ex08_subagent.py)
+**Runnable:** [`examples/python-sdk/ex08_subagent.py`](../examples/python-sdk/ex08_subagent.py) — run `… ipc` or `… in_process`
 
 **Side by side.** Strands offers a *menu* of multi-agent patterns — **agents-as-tools** (a lead agent treats specialists as callable tools, shown here), **Swarm** (agents autonomously hand off), **Graph** (a deterministic directed graph of agents), and **Workflow** — all running **in your process**. jaato's delegation is **async and daemon-driven**: the lead persona calls `spawn_subagent(profile=…, task=…)` and **ends its turn**; each specialist runs **server-side** in its own context (a per-subagent isolated runner + cgroup is designed but not yet shipped), and its result returns as a `[SUBAGENT … COMPLETED]` event the daemon uses to auto-continue the lead until it composes and `signal_completion`s. Because that spans many turns, the facade one-shots don't fit — you wait on `s.client` for the final `SESSION_TERMINATED`. (How the lead knows the targets: its **persona** gives the *role*, the **first prompt** carries the *task*, and the `subagent` plugin's `list_subagent_profiles` discovers the available **profiles** from `.jaato/profiles/`.)
 
