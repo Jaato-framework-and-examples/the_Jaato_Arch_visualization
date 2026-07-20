@@ -32,6 +32,7 @@ comparisons of jaato-sdk against other agent frameworks (10 examples each, simpl
 | **Agno** | ✅ available | [agno](sdk-comparisons/agno.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → Teams → workflow/cascade → production |
 | **Strands** | ✅ available | [strands](sdk-comparisons/strands.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → graph/cascade → production |
 | **OpenAI Agents SDK** | ✅ available | [openai-agents](sdk-comparisons/openai-agents.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → handoffs → cascade → production |
+| **LlamaIndex** | ✅ available | [llamaindex](sdk-comparisons/llamaindex.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → AgentWorkflow → Workflow/cascade → production. *(RAG-first data framework; its event-driven `Workflow` is the closest cousin to jaato's cascade. Doubleword via generic `OpenAILike`.)* |
 | **Claude Agent SDK** | ✅ available | [claude-agent](sdk-comparisons/claude-agent.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → subagents → cascade → production |
 
 ## Platform comparisons
