@@ -2,7 +2,7 @@
 
 Ten worked examples, simplest first, each shown in **LlamaIndex** (Python) and **jaato-sdk** (Python). The point isn't "which is fewer lines" — it's to make the *shape* of each SDK visible, because they sit in different categories:
 
-- **LlamaIndex** is a **data framework for LLM apps, RAG-first**: its defining job is turning *your data* into indexes, retrievers, and query engines (`VectorStoreIndex`, `QueryEngine`, node parsers, 300+ readers). On top of that data layer sits an **agent** layer (`FunctionAgent` / `AgentWorkflow`) and an **event-driven `Workflow`** engine. Everything runs **in-process** in your Python program; state, isolation, durability, and multi-tenancy are yours to assemble. *(This comparison focuses on the agent / LLM-app surface — the part that lines up with jaato. LlamaIndex's retrieval/indexing core is its home turf and has **no jaato analog**: jaato ships `filesystem_query` / `web_search` tool plugins, but it is not a document-ingestion or vector-retrieval framework. If your center of gravity is RAG over your own corpus, that's LlamaIndex's job, not jaato's.)*
+- **LlamaIndex** is a **data framework for LLM apps, RAG-first**: its defining job is turning *your data* into indexes, retrievers, and query engines (`VectorStoreIndex`, `QueryEngine`, node parsers, 300+ readers). On top of that data layer sits an **agent** layer (`FunctionAgent` / `AgentWorkflow`) and an **event-driven `Workflow`** engine. Everything runs **in-process** in your Python program; state, isolation, durability, and multi-tenancy are yours to assemble. *(This comparison focuses on the agent / LLM-app surface — the part that lines up with jaato. Two scope clarifications: **(1)** LlamaIndex's **retrieval** pipeline — chunk → embed → vector-index → retrieve (`VectorStoreIndex`, query engines, node parsers) — has **no jaato analog**: jaato ships `filesystem_query` / `web_search` tool plugins, but it is not a document-ingestion or vector-retrieval framework. If your center of gravity is RAG over your own corpus, that's LlamaIndex's job. **(2)** But **multimodal document input** — handing an image or PDF *straight to a vision model* — is **not** retrieval, and jaato supports it too (`attachments=…`); the two are real peers there, so it gets its own side-by-side after Example 10.)*
 - **jaato-sdk** is a **runtime you run two ways**: `jaato.session(mode=…)` runs the *same* agent **embedded in your process** (no daemon — like LlamaIndex's in-process agents) **or** against a **long-lived daemon** (local `ipc`, auto-started if needed, or remote `ws`), where each agent runs in a confined, isolated, permission-gated per-session runner. Either way you open a **session** and `ask` it — the agent loop, tool execution, persistence, and permissions live in the **runtime**; the daemon adds isolation, multi-tenancy, and recovery.
 
 Running behind the daemon is a real architectural option — but with the **convenience facade** (`jaato.session(mode=…)` → `s.ask` / `s.complete` / `s.stream`) it costs about **one line** (`async with`), not a page of event-plumbing. So the basic examples are close to LlamaIndex in size, and the advanced ones (multi-agent, human approval, cascades, crash-recovery) come built-in rather than assembled. Read it as a trade, not a scoreboard.
@@ -331,11 +331,40 @@ async with jaato.session(mode="ipc", recovery=True,
 
 ---
 
+## Bonus axis: multimodal input (images & PDFs)
+
+LlamaIndex is the **document / multimodal** framework of this set, so it's worth showing the one document-handling axis where jaato is a genuine peer: sending an **image or PDF directly to a vision-capable model** — no retrieval, no index, the file *is* the input. Both SDKs support it; the earlier "RAG has no jaato analog" line is about *retrieval*, not this.
+
+**LlamaIndex** — typed content blocks on a `ChatMessage`:
+```python
+from llama_index.core.llms import ChatMessage, TextBlock, ImageBlock, DocumentBlock
+llm = OpenAI(model="gpt-4o")                          # a vision-capable model
+resp = llm.chat([ChatMessage(role="user", blocks=[
+    TextBlock(text="What's in this chart? Summarise the PDF."),
+    ImageBlock(path="chart.png"),
+    DocumentBlock(path="report.pdf", document_mimetype="application/pdf"),
+])])
+print(resp.message.content)
+```
+
+**jaato-sdk** — `attachments=` on any `ask` / `complete` / `stream`:
+```python
+async with jaato.session(mode="ipc",
+        profile={"model": "gpt-4o", "provider": "openai", "plugins": []}) as s:   # vision-capable model
+    print(await s.ask("What's in this chart? Summarise the PDF.",
+                      attachments=["chart.png", "report.pdf"]))   # file paths → base64'd client-side
+# each item may instead be a dict: {"mime_type": "application/pdf", "data": <bytes|base64>, "display_name": "report.pdf"}
+```
+
+**Side by side.** Same capability, different shape. LlamaIndex models the message as a list of typed **content blocks** (`ImageBlock` / `DocumentBlock` with an explicit `document_mimetype`) you assemble. jaato takes a flat `attachments=` list — a **file path** (bytes read, mime guessed from the extension, base64-encoded *client-side*, so a remote `ws` daemon never needs your filesystem) or a `{mime_type, data, display_name}` dict — and delivers it to the provider's multimodal path. Two shared caveats: **(1)** it only works on a **vision/PDF-capable model** — in jaato that's gated by the provider's declared **input modalities** (catalog-detected, or asserted via the provider's `modalities` knob; for **Doubleword** you *must* assert vision through `plugin_configs.doubleword.modalities`, since its catalog classifies none), and in LlamaIndex by whether the LLM + `document_mimetype` combo is wired (`DocumentBlock` isn't supported on every model path). **(2)** This is the **non-RAG** route — the whole file lands in the context window; for a large corpus you'd still reach for LlamaIndex's retrieval, the part jaato doesn't do. jaato also supports the *reverse* direction, with no LlamaIndex analog: a **tool result** can carry image/PDF `attachments` *back* to the model (a tool that renders a chart, screenshots a page, returns a generated PDF).
+
+---
+
 ## Coming from LlamaIndex
 
 Not a scorecard — if you already think in LlamaIndex, here's what actually changes when you move to jaato, and what it buys you:
 
-- **RAG stays LlamaIndex's job — jaato doesn't replace it.** LlamaIndex's core is data → indexes → retrievers → query engines; jaato has **no** equivalent (its `filesystem_query` / `web_search` plugins are tools an agent calls, not an ingestion/retrieval framework). The realistic pattern is *both*: keep LlamaIndex (or its retrievers) for RAG, and expose retrieval to a jaato agent as a **client tool** (Example 5) or a server-side plugin. Everything below is about the **agent / orchestration** surface, not retrieval.
+- **RAG-*retrieval* stays LlamaIndex's job — but multimodal input doesn't.** LlamaIndex's *retrieval* core — data → indexes → retrievers → query engines — has **no** jaato equivalent (its `filesystem_query` / `web_search` plugins are tools an agent calls, not an ingestion/retrieval framework); the realistic pattern is *both*: keep LlamaIndex's retrievers for RAG and expose retrieval to a jaato agent as a **client tool** (Example 5) or a server-side plugin. Don't over-scope that, though: **direct image/PDF input to a vision model** is *not* retrieval, and jaato does it via `attachments=` (the bonus section) — so "LlamaIndex handles documents, jaato doesn't" is true only for the *retrieval* half, not the multimodal one.
 - **Your `as_structured_llm` / `output_cls` becomes a server-enforced completion gate.** In LlamaIndex you validate the model's reply *in your process* into a Pydantic object. jaato moves that to the boundary: a profile's `completion_payload_schema` is checked *server-side* — the agent must `signal_completion(payload)`, the daemon validates it (and runs completion processors), and `s.complete()` hands you the validated payload or `None`. A wrong-shape payload is bounced back to the model to retry; the agent can't "finish" off-shape, no matter which client is attached (you get a `dict`, not a typed object — see the trade-offs).
 - **Your in-process `FunctionAgent` can *stay* in-process — or become an isolated daemon session.** jaato runs the *same* agent **embedded** (`mode="in_process"`, like a LlamaIndex agent) **or** as a confined per-session subprocess (`mode="ipc"`/`"ws"`) — so you keep the in-process simplicity *and* gain isolation, multi-tenancy, permissions, and crash-recovery when you want them, by flipping `mode`, not rewriting the agent. The conversation *is* the session (a second `s.ask` continues it), and the system prompt is a reusable **persona** (`agent="pirate"`) instead of a constructor arg.
 - **Your `AgentWorkflow` handoffs become daemon-driven subagents.** A LlamaIndex `AgentWorkflow` routes between agents **in your process**, blocking until it composes. jaato's lead calls `spawn_subagent(profile=…, task=…)` and **ends its turn** — each specialist runs **server-side** and its completion event drives the daemon to auto-continue the lead, across turns, until it composes and `signal_completion`s. Same three inputs (role, registry, means), but execution is async and decoupled.
