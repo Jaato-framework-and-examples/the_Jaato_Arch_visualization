@@ -27,6 +27,7 @@ comparisons of jaato-sdk against other agent frameworks (10 examples each, simpl
 |-----------|--------|-----|
 | **LangChain / LangGraph** | ✅ available | [langchain](sdk-comparisons/langchain.md) — hello-world → streaming → typed output → tools → agent loop → HITL → multi-agent → cascade → production/recovery |
 | **Mastra** | ✅ available | [mastra](sdk-comparisons/mastra.md) — TS-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → workflow/cascade → production |
+| **Vercel AI SDK** | ✅ available | [vercel-ai](sdk-comparisons/vercel-ai.md) — TS-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → chain/cascade → production. *(The one framework with a first-party Doubleword provider, `@doubleword/vercel-ai`.)* |
 | **Pydantic AI** | ✅ available | [pydantic-ai](sdk-comparisons/pydantic-ai.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → deferred-tools HITL → delegation → graph/cascade → production |
 | **Agno** | ✅ available | [agno](sdk-comparisons/agno.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → Teams → workflow/cascade → production |
 | **Strands** | ✅ available | [strands](sdk-comparisons/strands.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → graph/cascade → production |
