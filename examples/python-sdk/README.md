@@ -19,13 +19,23 @@ so it won't collide with any other jaato daemon on the host.
 ./daemon.sh stop
 ```
 
-Provider auth is **not** an env var or a tracked secret — the `openrouter`
-credential is a `pass:` resolver knob of the provider plugin
-(`plugin_configs.openrouter.api_key = "pass://jaato/openrouter/api-key"`), which
-the daemon resolves from the password store at session creation. Inline-spec
-examples spread it via `_config.AUTH`; declarative profiles carry it in their
-JSON. `.env` only names the provider + model. (`jaato-scaffold explain provider
-openrouter` / `explain profile` document the credential resolver.)
+Provider auth is the `openrouter` `api_key` knob of the provider plugin,
+referenced via `${JAATO_OPENROUTER_API_KEY}` env-var interpolation
+(`plugin_configs.openrouter.api_key = "${JAATO_OPENROUTER_API_KEY}"`), which the
+daemon expands from the session env at session creation. Inline-spec examples
+spread it via `_config.AUTH`; declarative profiles carry it in their JSON. Set
+the key in `.env` (git-ignored; `cp .env.example .env`) — `_config.py` passes
+`.env` to the daemon as `env_file`.
+
+> ⚠️ **`pass://` needs jaato-premium.** These examples used to reference the key
+> as `api_key: "pass://jaato/openrouter/api-key"`. That secret-URI scheme is
+> served by a resolver registered through the `jaato.premium` entry point, which
+> ships only in the private **jaato-premium** package. On a public checkout it
+> fails **silently**: jaato logs a warning and then uses the literal `pass://…`
+> string as the key, so OpenRouter returns an auth error that never mentions
+> secret resolution (and `jaato-scaffold validate` still passes). The
+> `${JAATO_OPENROUTER_API_KEY}` form avoids that. See the
+> [org-wide note](https://github.com/Jaato-framework-and-examples/.github/blob/main/profile/README.md#-providers-and-api-keys-in-these-examples--read-this-first).
 
 ## Example → docs map
 

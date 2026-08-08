@@ -7,7 +7,7 @@
   "plugins": [],
   "plugin_configs": {
     "openrouter": {
-      "api_key": "pass://jaato/openrouter/api-key"
+      "api_key": "${JAATO_OPENROUTER_API_KEY}"
     }
   },
   "system_instructions": "You extract structured facts about a person from the user's text. Do not chat. Immediately call the `signal_completion` tool with a payload matching the completion schema: `name` (string) and `age` (integer). Calling `signal_completion` is REQUIRED to end the turn.",

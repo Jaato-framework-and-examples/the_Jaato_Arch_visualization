@@ -11,10 +11,20 @@ Connects to the **same dedicated daemon** as the SDK surfaces (WS `:8099`).
 ## Run
 
 ```bash
+export JAATO_OPENROUTER_API_KEY=sk-or-...  # provider key; inherited by the daemon
 (cd ../python-sdk && ./daemon.sh start)   # shared dedicated daemon (serves WS :8099)
 ./run.sh ex1_basic_session.mjs            # run one example
 ./run.sh smoke.mjs                        # run all, assert the working core
 ```
+
+> ⚠️ **Provider key / `pass://` needs jaato-premium.** The inline `SPEC` in
+> `_config.mjs` sets `plugin_configs.openrouter.api_key = "${JAATO_OPENROUTER_API_KEY}"`.
+> Over WS there is no `env_file`, so the daemon expands that var from **its own
+> process environment** — export `JAATO_OPENROUTER_API_KEY` before `daemon.sh
+> start`. This replaced a `pass://` secret URI, whose resolver ships only in the
+> private **jaato-premium** package (on a public checkout it fails silently — the
+> literal URI is used as the key). See the
+> [org-wide note](https://github.com/Jaato-framework-and-examples/.github/blob/main/profile/README.md#-providers-and-api-keys-in-these-examples--read-this-first).
 
 `run.sh` sets `NODE_EXTRA_CA_CERTS=$HOME/.jaato/certs/ca.crt` so node trusts the
 daemon's self-signed Jaato Dev CA for `wss://`. The bearer token is read from
@@ -40,9 +50,10 @@ verbatim from the doc; each file's header shows the doc snippet alongside.
   `:8080`/`:8089`); token from `~/.jaato/ws.token`.
 - **Inline session spec in `payload.spec`** — the doc shows `session.new
   --profile backend`; the runnable uses an inline spec (model/provider + the
-  `pass:` credential knob) so it works against a fresh daemon with no
-  pre-installed `backend` profile. (Provider = `openrouter`,
-  model = `google/gemini-2.5-flash`.)
+  `api_key` knob `"${JAATO_OPENROUTER_API_KEY}"`) so it works against a fresh
+  daemon with no pre-installed `backend` profile. (Provider = `openrouter`,
+  model = `google/gemini-2.5-flash`.) A `pass://` secret URI here would need
+  jaato-premium — see the note under **Run**.
 
 ## Notes
 

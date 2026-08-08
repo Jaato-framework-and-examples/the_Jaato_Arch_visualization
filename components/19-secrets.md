@@ -71,6 +71,18 @@ env:
   OPENROUTER_API_KEY: "pass://jaato/openrouter/api-key" # Unix password-store
   SERVICE_BASE: "http://127.0.0.1:${SERVICE_PORT}"       # network scheme — NOT treated as a secret
 ```
+
+> **`${VAR}`/plaintext work everywhere; secret-URI schemes need a resolver
+> plugin.** `${VAR}` interpolation and plaintext are core-framework features. The
+> secret-URI schemes above (`pass://`, `vault://`, `awssm://`, …) are resolved by
+> **out-of-tree, entry-point-only** plugins registered through `jaato.premium →
+> secret_resolvers`, which ship in the private **jaato-premium** package. On a
+> public checkout with no such plugin, an unregistered scheme does **not** raise
+> in the generic path: `_resolve_secret_uri` logs a warning and returns the
+> literal URI as the value — so `pass://…` can reach a provider *as the API key*
+> and produce a confusing auth error. The runnable examples in this repo
+> therefore use the `${VAR}` form; use `pass://`/`vault://` only if you have
+> jaato-premium installed.
 ```text
 # Interactive provider login (commands available at daemon startup):
 anthropic-auth login        # OAuth PKCE → paste code → anthropic-auth code <code>

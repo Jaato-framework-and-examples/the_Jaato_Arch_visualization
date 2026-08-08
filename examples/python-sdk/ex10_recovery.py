@@ -44,7 +44,7 @@ async def main():
         mode=mode, recovery=True,
         workspace_path=Path(WORKSPACE),   # a Path: the recovery client does workspace_path / ".jaato"
         profile="recovery-demo",   # NAMED profile (.jaato/profiles/recovery-demo.json): recovery
-                                   # re-resolves the profile's pass:// on the fresh daemon by NAME;
+                                   # re-resolves the profile's ${JAATO_OPENROUTER_API_KEY} on the fresh daemon by NAME;
                                    # an INLINE profile isn't persisted to the recovery record.
         on_status_change=lambda st: print(st.state),   # auto-reconnect across daemon restarts
         **conn,

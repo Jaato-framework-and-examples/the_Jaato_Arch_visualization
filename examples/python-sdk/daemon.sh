@@ -3,16 +3,19 @@
 #
 # Its own IPC socket, WS port, pid file and log file, so it won't collide with
 # any other jaato daemon you may be running on the host. Provider auth
-# (openrouter) resolves from a `pass:` knob in the profiles
-# (plugin_configs.openrouter.api_key) — no key is passed here.
+# (openrouter) is read as ${JAATO_OPENROUTER_API_KEY}: the python-sdk examples
+# pass it via env_file (.env); the ts-sdk / ws examples connect over WS with no
+# env_file, so export JAATO_OPENROUTER_API_KEY in THIS shell before `start` and
+# the daemon inherits it.
 set -euo pipefail
 
 # Prefer jaato-server on PATH; fall back to the conventional pip-install location.
 JAATO_SERVER="${JAATO_SERVER:-$(command -v jaato-server || echo "$HOME/.local/share/jaato/venv/bin/jaato-server")}"
-# Provider auth is NOT injected here. Credentials live in the profiles as a
-# `pass:` resolver knob of the provider plugin
-# (plugin_configs.openrouter.api_key = "pass://jaato/openrouter/api-key") — no
-# env var, no secret in any tracked file.
+# Provider auth uses the api_key knob with ${ENV_VAR} interpolation
+# (plugin_configs.openrouter.api_key = "${JAATO_OPENROUTER_API_KEY}"). Export the
+# key before starting (ts-sdk/ws) or set it in .env (python-sdk env_file). This
+# replaced a "pass://jaato/openrouter/api-key" secret URI, whose resolver ships
+# only in the private jaato-premium package (unavailable on a public checkout).
 SOCKET="/tmp/jaato-examples.sock"
 WSPORT=":8099"
 PIDFILE="/tmp/jaato-examples.pid"

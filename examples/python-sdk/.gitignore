@@ -1,6 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
+# Local env holds a LIVE provider key — never commit it. Template is .env.example.
+.env
+!.env.example
 # jaato runtime artifacts written into the workspace .jaato/ at session time
 .jaato/sessions/
 .jaato/logs/
