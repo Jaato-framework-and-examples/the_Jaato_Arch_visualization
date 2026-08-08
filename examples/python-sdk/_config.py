@@ -31,15 +31,20 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 # collide with any other jaato daemon on the host.
 SOCKET = "/tmp/jaato-examples.sock"
 
-# Provider credential, supplied as a `pass:` resolver knob of the provider
-# plugin (NOT an env var, NOT a tracked secret) — the daemon's credential
-# resolver reads plugin_configs.<provider>.api_key and resolves the pass:// URI
-# from the password store at session creation. `explain provider openrouter`
-# shows the resolution order (api_key_param:api_key → env → stored); `explain
-# profile` documents secret URIs on the value resolver. Inline-spec examples
-# spread `**AUTH` into the profile dict; declarative profiles carry the same
-# knob in their JSON.
-AUTH = {"plugin_configs": {"openrouter": {"api_key": "pass://jaato/openrouter/api-key"}}}
+# Provider credential, supplied as the `api_key` knob of the provider plugin
+# via ${ENV_VAR} interpolation (public-checkout friendly). The daemon expands
+# plugin_configs.<provider>.api_key against the session env (this example passes
+# .env as env_file, below) at session creation. Set JAATO_OPENROUTER_API_KEY in
+# .env (git-ignored; copy .env.example). `explain provider openrouter` shows the
+# resolution order (api_key_param:api_key → env → stored). Inline-spec examples
+# spread `**AUTH` into the profile dict; declarative profiles carry the same knob
+# in their JSON.
+#
+# NOTE: this used to be "pass://jaato/openrouter/api-key". That secret-URI scheme
+# is resolved only by the private jaato-premium package; on a public checkout it
+# does not resolve (jaato warns and the literal URI is used as the key → a
+# confusing upstream auth error). If you have jaato-premium, pass:// is nicer.
+AUTH = {"plugin_configs": {"openrouter": {"api_key": "${JAATO_OPENROUTER_API_KEY}"}}}
 
 # Connection kwargs forwarded to {IPCClient,IPCRecoveryClient}.session(...) by
 # EVERY example. Just the daemon coordinates — `env_file` (absolute, so

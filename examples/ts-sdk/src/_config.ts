@@ -36,11 +36,18 @@ const TOKEN = readFileSync(join(homedir(), ".jaato", "ws.token"), "utf8").trim()
 // harness prefix; everything after it is the doc's verbatim shape.
 export const CONN = { url: URL, token: TOKEN };
 
-// Provider credential as a `pass:` resolver knob of the provider plugin (never an
-// env var / committed secret). Spread into inline profiles as `...AUTH`;
-// declarative profiles carry the same knob in their JSON.
+// Provider credential as the `api_key` knob of the provider plugin, via
+// ${ENV_VAR} interpolation (public-checkout friendly). The daemon expands it
+// against ITS process environment (these WS examples pass no env_file), so
+// export JAATO_OPENROUTER_API_KEY before starting the shared daemon (daemon.sh).
+// Spread into inline profiles as `...AUTH`; declarative profiles carry the knob.
+//
+// NOTE: this used to be "pass://jaato/openrouter/api-key". That secret-URI
+// scheme is resolved only by the private jaato-premium package; on a public
+// checkout it does not resolve (the literal URI is used as the key → a
+// confusing upstream auth error). If you have jaato-premium, pass:// is nicer.
 export const AUTH = {
-  plugin_configs: { openrouter: { api_key: "pass://jaato/openrouter/api-key" } },
+  plugin_configs: { openrouter: { api_key: "${JAATO_OPENROUTER_API_KEY}" } },
 };
 
 // The docs write the inline profile as {model:"gpt-4o", provider:"openai"}; the

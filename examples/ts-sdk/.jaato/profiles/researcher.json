@@ -7,7 +7,7 @@
   "plugins": [],
   "plugin_configs": {
     "openrouter": {
-      "api_key": "pass://jaato/openrouter/api-key"
+      "api_key": "${JAATO_OPENROUTER_API_KEY}"
     }
   },
   "system_instructions": "You are a research specialist. Given a topic, produce 3-5 concise bullet-point notes of the most important facts, then stop. Be factual and terse."

@@ -11,11 +11,23 @@ both the IPC socket and the WS port `:8099`).
 ## Build & run
 
 ```bash
+export JAATO_OPENROUTER_API_KEY=sk-or-...  # provider key (see below); inherited by the daemon
 (cd ../python-sdk && ./daemon.sh start)   # shared dedicated daemon (IPC + WS :8099)
 ./setup.sh                                # vendor the local @jaato/sdk, npm install, tsc
 ./run.sh src/ex01_basic_ask.ts            # run one example
 ./run.sh src/smoke.ts                     # run every example, assert green
 ```
+
+> ⚠️ **Provider key / `pass://` needs jaato-premium.** The inline profiles and
+> declarative profiles reference the key as
+> `plugin_configs.openrouter.api_key = "${JAATO_OPENROUTER_API_KEY}"`. These WS
+> examples pass no `env_file`, so the daemon expands that var from **its own
+> process environment** — export `JAATO_OPENROUTER_API_KEY` (get one at
+> https://openrouter.ai/settings/keys) before `daemon.sh start`. The key used to
+> be a `pass://` secret URI, whose resolver ships only in the private
+> **jaato-premium** package; on a public checkout it fails silently (the literal
+> URI is used as the key). See the
+> [org-wide note](https://github.com/Jaato-framework-and-examples/.github/blob/main/profile/README.md#-providers-and-api-keys-in-these-examples--read-this-first).
 
 `run.sh` sets `NODE_EXTRA_CA_CERTS=$HOME/.jaato/certs/ca.crt` so Node trusts the
 daemon's self-signed **Jaato Dev CA** for the `wss://` connection (the clean way —
@@ -44,10 +56,11 @@ Each file maps to `mastra.md` (the TypeScript jaato side); the Python `§N` maps
 
 1. **`...CONN`** — connection (`url`, `token`) from `_config.ts`, pointing at the
    dedicated daemon's WS endpoint. The doc shows `url` only.
-2. **`...AUTH`** — the provider's `pass:` credential knob
-   (`plugin_configs.openrouter.api_key`), spread into inline profiles; declarative
-   profiles carry it in their JSON. (Project convention: creds via `pass:` knobs,
-   never env vars.)
+2. **`...AUTH`** — the provider's `api_key` knob
+   (`plugin_configs.openrouter.api_key = "${JAATO_OPENROUTER_API_KEY}"`), spread
+   into inline profiles; declarative profiles carry it in their JSON. Uses
+   `${ENV_VAR}` interpolation (public-checkout friendly); a `pass://` secret URI
+   would need jaato-premium — see the note under **Build & run**.
 3. **OpenRouter model/provider** — `{model:"google/gemini-2.5-flash",
    provider:"openrouter"}` in place of the docs' `{model:"gpt-4o",
    provider:"openai"}`.

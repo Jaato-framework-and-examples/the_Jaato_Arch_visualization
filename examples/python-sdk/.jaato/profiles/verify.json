@@ -7,7 +7,7 @@
 
   "max_turns": 3,
   "plugins": [],
-  "plugin_configs": { "openrouter": { "api_key": "pass://jaato/openrouter/api-key" } },
+  "plugin_configs": { "openrouter": { "api_key": "${JAATO_OPENROUTER_API_KEY}" } },
 
   "completion_payload_schema": {
     "type": "object",

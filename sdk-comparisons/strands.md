@@ -297,7 +297,7 @@ async with jaato.session(mode="ipc", recovery=True,
     print(await s.ask("Long task…"))                          # survives a daemon bounce
 # sessions also persist server-side: detach (fire-and-forget) and re-attach by id with the low-level client.
 ```
-> **Recovery needs a *named* profile.** The session record persists the profile **name** (+ workspace), not an inline spec — so the fresh daemon re-resolves the profile's `pass://` credential by name. An inline `profile={…}` has no name to recover from.
+> **Recovery needs a *named* profile.** The session record persists the profile **name** (+ workspace), not an inline spec — so the fresh daemon re-resolves the profile's credential by name. An inline `profile={…}` has no name to recover from.
 
 **Runnable:** [`examples/python-sdk/ex10_recovery.py`](../examples/python-sdk/ex10_recovery.py) — run `… ipc` or `… ws` (the two daemon transports)
 
