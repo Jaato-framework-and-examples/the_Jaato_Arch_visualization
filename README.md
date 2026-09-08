@@ -32,6 +32,7 @@ comparisons of jaato-sdk against other agent frameworks (10 examples each, simpl
 | **Strands** | ✅ available | [strands](sdk-comparisons/strands.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → multi-agent → graph/cascade → production |
 | **OpenAI Agents SDK** | ✅ available | [openai-agents](sdk-comparisons/openai-agents.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → handoffs → cascade → production |
 | **Claude Agent SDK** | ✅ available | [claude-agent](sdk-comparisons/claude-agent.md) — Python-both: hello-world → streaming → memory → typed output → tools → agent loop → HITL → subagents → cascade → production |
+| **pi coding-agent** (earendil-works/pi) | ✅ available | [pi](sdk-comparisons/pi.md) — assessment-shaped rather than ten examples: licensing (MIT vs BUSL) → permissions and HITL → sandboxing and tenancy → runtime limits → secrets → PII → audit and interrogation → EU AI Act map → knowledge → service integration → cascade observability → scaffolding; scorecard + harness-by-harness + build-anyway tables |
 
 ## Platform comparisons
 
